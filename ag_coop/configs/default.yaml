@@ -1,0 +1,27 @@
+episode:
+  horizon_steps: 500
+  decision_period: 5   # K
+  map_path: "maps/map_01.map"   # 先占位，后面再换成你的地图路径
+  seed: 0
+
+robots:
+  n_ugv: 3
+  n_uav: 1
+
+tasks:
+  enabled: true
+  arrival_rate: 0.1     # 每步到达概率（Day1 先不用也行）
+  deadline_min: 80
+  deadline_max: 160
+  top_m: 5
+
+comm:
+  enabled: true
+  snr_threshold: 0.0    # Day1 可以占位
+  obstacle_penalty: 2.0
+  pathloss_n: 2.0
+
+logging:
+  out_dir: "outputs"
+  save_trace: true
+  save_metrics: true
