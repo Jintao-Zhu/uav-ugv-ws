@@ -1,19 +1,19 @@
-"""Seeding utilities for reproducibility."""
+"""随机种子工具，用于实验可复现性。"""
 import random
 import numpy as np
 
 
 def seed_everything(seed: int) -> None:
     """
-    Set random seeds for all random number generators.
+    为所有随机数生成器设置种子。
 
     Args:
-        seed: Random seed value
+        seed: 随机种子值
     """
     random.seed(seed)
     np.random.seed(seed)
 
-    # Reserved for torch (Day1 not used yet)
+    # 预留 torch 接口（Day1 暂不使用）
     try:
         import torch
         torch.manual_seed(seed)
@@ -23,4 +23,4 @@ def seed_everything(seed: int) -> None:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
     except ImportError:
-        pass  # torch not installed, skip
+        pass  # torch 未安装，跳过

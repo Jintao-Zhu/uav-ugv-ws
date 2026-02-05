@@ -1,4 +1,4 @@
-"""Run a single episode with seeding and config resolution."""
+"""运行单个 episode，支持随机种子和配置解析。"""
 import argparse
 import random
 import numpy as np
@@ -9,7 +9,7 @@ from agcoop.utils.io import load_config, save_resolved_config
 
 
 def generate_initial_positions(n_robots: int, map_size: int = 10):
-    """Generate random initial positions for robots."""
+    """生成机器人的随机初始位置。"""
     positions = []
     for _ in range(n_robots):
         x = random.randint(0, map_size - 1)
@@ -19,7 +19,7 @@ def generate_initial_positions(n_robots: int, map_size: int = 10):
 
 
 def generate_task_stream(n_tasks: int, map_size: int = 10):
-    """Generate a dummy task stream."""
+    """生成 dummy 任务流。"""
     tasks = []
     for i in range(n_tasks):
         start = (random.randint(0, map_size - 1), random.randint(0, map_size - 1))
@@ -46,27 +46,27 @@ def main():
                         help="Override output directory")
     args = parser.parse_args()
 
-    # Load config
+    # 加载配置
     config = load_config(args.config)
 
-    # Override seed from CLI if provided
+    # 如果 CLI 提供了 seed，则覆盖配置中的 seed
     if args.seed is not None:
         config["episode"]["seed"] = args.seed
 
-    # Override output dir if provided
+    # 如果提供了输出目录，则覆盖
     if args.output_dir is not None:
         config["logging"]["out_dir"] = args.output_dir
 
-    # Set random seeds
+    # 设置随机种子
     seed = config["episode"]["seed"]
     seed_everything(seed)
     print(f"Using seed: {seed}")
 
-    # Save resolved config for reproducibility
+    # 保存最终解析后的配置，用于实验复现
     output_dir = config["logging"]["out_dir"]
     save_resolved_config(config, output_dir)
 
-    # Generate dummy initial positions and task stream
+    # 生成 dummy 初始位置和任务流
     n_robots = config["robots"]["n_ugv"] + config["robots"]["n_uav"]
     positions = generate_initial_positions(n_robots)
     print(f"Initial positions: {positions}")
