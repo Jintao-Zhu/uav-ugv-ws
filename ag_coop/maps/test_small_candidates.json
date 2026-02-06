@@ -1,0 +1,183 @@
+{
+  "map_info": {
+    "map_id": "test_small",
+    "width": 10,
+    "height": 10,
+    "resolution": 0.2,
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "free_cells": 56
+  },
+  "generation_params": {
+    "num_candidates": 12,
+    "min_degree": 5,
+    "seed": 42,
+    "connectivity": 4
+  },
+  "statistics": {
+    "total_junctions": 0,
+    "selected_junctions": 0,
+    "random_points": 12,
+    "final_count": 12
+  },
+  "candidates": [
+    {
+      "id": 0,
+      "cell": [
+        1,
+        1
+      ],
+      "world": [
+        0.30000000000000004,
+        0.30000000000000004
+      ],
+      "degree": 2,
+      "is_junction": false
+    },
+    {
+      "id": 1,
+      "cell": [
+        1,
+        6
+      ],
+      "world": [
+        1.3,
+        0.30000000000000004
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 2,
+      "cell": [
+        5,
+        8
+      ],
+      "world": [
+        1.7000000000000002,
+        1.1
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 3,
+      "cell": [
+        2,
+        8
+      ],
+      "world": [
+        1.7000000000000002,
+        0.5
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 4,
+      "cell": [
+        3,
+        8
+      ],
+      "world": [
+        1.7000000000000002,
+        0.7000000000000001
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 5,
+      "cell": [
+        8,
+        3
+      ],
+      "world": [
+        0.7000000000000001,
+        1.7000000000000002
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 6,
+      "cell": [
+        6,
+        3
+      ],
+      "world": [
+        0.7000000000000001,
+        1.3
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 7,
+      "cell": [
+        4,
+        7
+      ],
+      "world": [
+        1.5,
+        0.9
+      ],
+      "degree": 4,
+      "is_junction": false
+    },
+    {
+      "id": 8,
+      "cell": [
+        7,
+        5
+      ],
+      "world": [
+        1.1,
+        1.5
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 9,
+      "cell": [
+        2,
+        7
+      ],
+      "world": [
+        1.5,
+        0.5
+      ],
+      "degree": 4,
+      "is_junction": false
+    },
+    {
+      "id": 10,
+      "cell": [
+        8,
+        7
+      ],
+      "world": [
+        1.5,
+        1.7000000000000002
+      ],
+      "degree": 3,
+      "is_junction": false
+    },
+    {
+      "id": 11,
+      "cell": [
+        1,
+        4
+      ],
+      "world": [
+        0.9,
+        0.30000000000000004
+      ],
+      "degree": 3,
+      "is_junction": false
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "map_id": "test_ros",
+  "map_path": "maps/test_ros.yaml",
+  "width": 20,
+  "height": 20,
+  "total_cells": 400,
+  "free_count": 306,
+  "obstacle_count": 94,
+  "free_percent": 76.5,
+  "resolution": 0.05,
+  "origin": [
+    -10.0,
+    -10.0
+  ],
+  "frame": "map",
+  "connectivity_default": 4
+}

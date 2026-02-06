@@ -1,0 +1,24 @@
+{
+  "map_id": "map_01",
+  "map_path": "maps/map_01.map",
+  "width": 20,
+  "height": 20,
+  "total_cells": 400,
+  "free_count": 286,
+  "obstacle_count": 114,
+  "free_percent": 71.5,
+  "resolution": 0.2,
+  "origin": [
+    0.0,
+    0.0
+  ],
+  "frame": "map",
+  "connectivity_default": 4,
+  "coordinate_convention": {
+    "index_order": "row_col",
+    "origin_location": "lower_left",
+    "y_axis_direction": "up",
+    "cell_center_offset": 0.5,
+    "note": "i=row(y), j=col(x); world_x = origin_x + (j+0.5)*resolution"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "map_info": {
+    "width": 20,
+    "height": 20,
+    "resolution": 0.05,
+    "origin": [
+      -10.0,
+      -10.0
+    ],
+    "free_cells": 306
+  },
+  "test_1_cell_to_world_to_cell": {
+    "n_samples": 50,
+    "pass_count": 50,
+    "fail_count": 0,
+    "pass_rate": 100.0,
+    "failures": []
+  },
+  "test_2_world_to_cell_to_world": {
+    "n_samples": 50,
+    "pass_count": 50,
+    "fail_count": 0,
+    "pass_rate": 100.0,
+    "max_error": 0.03412914359777869,
+    "mean_error": 0.021487053547495725,
+    "out_of_bounds_count": 0,
+    "failures": []
+  },
+  "overall": {
+    "all_tests_passed": true,
+    "total_samples": 100,
+    "total_pass": 100,
+    "total_fail": 0
+  }
+}

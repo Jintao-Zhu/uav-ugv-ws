@@ -7,6 +7,7 @@ Day1 版本：UGV 原地不动，UAV 永远在 0 号车上，任务生成简单�
 
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
+from pathlib import Path
 import numpy as np
 
 
@@ -105,12 +106,18 @@ class AGCoopEnv:
     - 简单的任务完成规则（测试指标链路）
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], output_dir: Optional[str] = None, enable_logging: bool = False,
+                 run_id: Optional[str] = None, method: str = "static", planner: str = "none"):
         """
         初始化环境
 
         Args:
             config: 配置字典，包含 episode, robots, tasks 等配置
+            output_dir: 输出目录（用于日志记录），如果为 None 则不记录日志
+            enable_logging: 是否启用日志记录
+            run_id: 运行 ID（用于唯一标识一次运行）
+            method: 方法名称（static/greedy/coverage/ppo/il 等）
+            planner: 规划器名称（PIBT/HCA/none 等）
         """
         self.config = config
 
@@ -126,8 +133,21 @@ class AGCoopEnv:
         self.deadline_min = config['tasks']['deadline_min']
         self.deadline_max = config['tasks']['deadline_max']
 
-        # 通信配置（Day1 占位）
+        # 通信配置
         self.comm_enabled = config['comm']['enabled']
+        self.snr_threshold = config['comm'].get('snr_threshold', 0.0)
+
+        # 地图配置
+        self.map_path = config['episode'].get('map_path', 'none')
+        self.map_hash = None  # 延迟计算（在 reset 时）
+
+        # 决策周期
+        self.decision_period = config['episode'].get('decision_period', 5)
+
+        # 实验标识
+        self.run_id = run_id
+        self.method = method
+        self.planner = planner
 
         # 初始化随机数生成器
         self.rng = np.random.RandomState(self.seed)
@@ -138,6 +158,20 @@ class AGCoopEnv:
         # Day1: 简单的地图边界（假设 100x100）
         self.map_width = 100.0
         self.map_height = 100.0
+
+        # 日志记录
+        self.enable_logging = enable_logging
+        self.output_dir = output_dir
+        self.trace_logger = None
+        self.metrics_logger = None
+
+        # 用于跟踪每步完成的任务数和 outage
+        self._prev_tasks_completed = 0
+        self._prev_outage_steps = 0
+
+        # 用于跟踪 outage 连续性
+        self._current_outage_streak = 0
+        self._max_outage_streak = 0
 
     def reset(self) -> SystemState:
         """
@@ -168,6 +202,38 @@ class AGCoopEnv:
         self.state.deadline_miss = 0
         self.state.tardiness_sum = 0
         self.state._next_task_id = 0
+
+        # 重置日志跟踪变量
+        self._prev_tasks_completed = 0
+        self._prev_outage_steps = 0
+        self._current_outage_streak = 0
+        self._max_outage_streak = 0
+
+        # 初始化日志记录器
+        if self.enable_logging and self.output_dir:
+            from agcoop.utils.logger import TraceLogger, MetricsLogger
+            from agcoop.utils.io import save_resolved_config, compute_file_hash
+
+            # 计算地图哈希（如果地图存在）
+            if self.map_hash is None and self.map_path != 'none':
+                self.map_hash = compute_file_hash(self.map_path)
+            elif self.map_hash is None:
+                self.map_hash = "none"
+
+            # 创建输出目录
+            output_path = Path(self.output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            # 初始化 trace logger
+            self.trace_logger = TraceLogger(str(output_path / "trace.jsonl"))
+            self.trace_logger.open()
+
+            # 初始化 metrics logger
+            self.metrics_logger = MetricsLogger(str(output_path / "metrics.json"))
+            self.metrics_logger.start_timer()
+
+            # 保存配置
+            save_resolved_config(self.config, self.output_dir)
 
         return self.state
 
@@ -207,8 +273,16 @@ class AGCoopEnv:
         # 计算 outage（Day1: 简单随机，但可复现）
         self._update_outage()
 
+        # 记录日志（如果启用）
+        if self.enable_logging and self.trace_logger:
+            self._log_step()
+
         # 检查是否结束
         done = self.state.t >= self.horizon_steps
+
+        # 如果结束，保存最终指标
+        if done and self.enable_logging and self.metrics_logger:
+            self._save_final_metrics()
 
         # 构建返回信息
         reward = 0.0  # Day1 占位
@@ -314,3 +388,132 @@ class AGCoopEnv:
         ]
 
         return "\n".join(lines)
+
+    def _log_step(self) -> None:
+        """记录当前步的日志到 trace.jsonl"""
+        if self.state is None or self.trace_logger is None:
+            return
+
+        # 计算当前步完成的任务数
+        tasks_completed_this_step = self.state.tasks_completed - self._prev_tasks_completed
+        self._prev_tasks_completed = self.state.tasks_completed
+
+        # 计算当前步是否发生 outage
+        outage_this_step = 1 if (self.state.outage_steps > self._prev_outage_steps) else 0
+        self._prev_outage_steps = self.state.outage_steps
+
+        # 跟踪 outage 连续性
+        if outage_this_step:
+            self._current_outage_streak += 1
+            self._max_outage_streak = max(self._max_outage_streak, self._current_outage_streak)
+        else:
+            self._current_outage_streak = 0
+
+        # 判断是否为决策步
+        decision_step = (self.state.t % self.decision_period == 0)
+
+        # 构建步骤数据（包含预留字段）
+        step_data = {
+            't': self.state.t,
+            'ugv_pos': self.state.ugv_positions,
+            'uav_state': self.state.uav_onboard_ugv_id,
+            'num_tasks_in_pool': len(self.state.task_pool),
+            'num_active_tasks': len(self.state.get_active_tasks()),
+            'task_completed_ids': [],  # Day1 占位
+            'outage': outage_this_step,
+            'snr_best': 0.0,  # Day1 占位
+            'decision_step': decision_step,
+            'chosen_task_id': None,  # Day1 占位
+            'chosen_rendezvous': None,  # Day1 占位
+            'mapf_called': False,  # Day1 占位
+            'mapf_success': False,  # Day1 占位
+            'mapf_plan_time_ms': 0.0,  # Day1 占位
+        }
+
+        # 写入日志
+        self.trace_logger.write_step(step_data)
+
+    def _save_final_metrics(self) -> None:
+        """保存最终指标到 metrics.json"""
+        if self.state is None or self.metrics_logger is None:
+            return
+
+        # 计算基础指标
+        steps = self.state.t
+        tasks_completed = self.state.tasks_completed
+        total_tasks = len(self.state.task_pool)
+        active_tasks = len(self.state.get_active_tasks())
+        outage_steps = self.state.outage_steps
+        deadline_miss = self.state.deadline_miss
+        tardiness_sum = self.state.tardiness_sum
+
+        # 计算百分比和平均值
+        outage_percent = (outage_steps / steps * 100) if steps > 0 else 0.0
+        completion_rate = (tasks_completed / total_tasks * 100) if total_tasks > 0 else 0.0
+        deadline_miss_rate = (deadline_miss / tasks_completed * 100) if tasks_completed > 0 else 0.0
+        mean_tardiness = (tardiness_sum / deadline_miss) if deadline_miss > 0 else 0.0
+
+        # 生成 run_id（如果未指定）
+        if self.run_id is None:
+            map_name = Path(self.map_path).stem if self.map_path != 'none' else 'nomap'
+            self.run_id = f"{map_name}_N{self.n_ugv}_seed{self.seed}_lambda{self.arrival_rate}"
+
+        # 构建指标字典
+        metrics = {
+            # A. 复现与实验管理
+            'run_id': self.run_id,
+            'method': self.method,
+            'planner': self.planner,
+            'map_path': self.map_path,
+            'map_hash': self.map_hash if self.map_hash else "none",
+            'seed': self.seed,
+            'steps': steps,
+
+            # B. 任务质量
+            'tasks_completed': tasks_completed,
+            'total_tasks': total_tasks,
+            'active_tasks': active_tasks,
+            'completion_rate': round(completion_rate, 2),
+            'deadline_miss': deadline_miss,
+            'deadline_miss_rate': round(deadline_miss_rate, 2),
+            'tardiness_sum': tardiness_sum,
+            'mean_tardiness': round(mean_tardiness, 2),
+
+            # C. 通信指标
+            'outage_steps': outage_steps,
+            'outage_percent': round(outage_percent, 2),
+            'max_outage_streak': self._max_outage_streak,
+            'snr_threshold': self.snr_threshold,
+            'snr_best_mean': 0.0,  # Day1 占位
+            'snr_best_min': 0.0,   # Day1 占位
+
+            # D. 规划与执行（预留字段）
+            'mapf_calls': 0,
+            'mapf_success_calls': 0,
+            'mapf_timeout_calls': 0,
+            'mapf_mean_plan_time_ms': 0.0,
+            'fallback_wait_steps': 0,
+
+            # D2. 会合/回收
+            'rendezvous_success': 0,
+            'rendezvous_fail': 0,
+            'emergency_landings': 0,
+            'uav_loiter_steps': 0,
+            'ugv_hold_steps': 0,
+
+            # E. 性能与稳定性（runtime_sec 由 MetricsLogger 自动添加）
+            'termination_reason': 'horizon',
+        }
+
+        # 保存指标
+        self.metrics_logger.save_metrics(metrics)
+
+        # 关闭 trace logger
+        if self.trace_logger:
+            self.trace_logger.close()
+
+    def close(self) -> None:
+        """关闭环境并清理资源"""
+        if self.trace_logger and self.trace_logger.is_open:
+            self.trace_logger.close()
+

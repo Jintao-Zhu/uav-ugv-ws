@@ -1,0 +1,14 @@
+{
+  "seed": 42,
+  "steps": 500,
+  "tasks_completed": 0,
+  "total_tasks": 51,
+  "active_tasks": 51,
+  "outage_steps": 54,
+  "outage_percent": 10.8,
+  "deadline_miss": 0,
+  "deadline_miss_rate": 0.0,
+  "tardiness_sum": 0,
+  "mean_tardiness": 0.0,
+  "runtime_sec": 0.012360334396362305
+}
