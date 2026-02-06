@@ -17,9 +17,11 @@ tasks:
 
 comm:
   enabled: true
-  snr_threshold: 0.0    # Day1 可以占位
-  obstacle_penalty: 2.0
-  pathloss_n: 2.0
+  tx_power_db: 0.0          # 常数项（基准 SNR）
+  pathloss_n: 2.0           # 距离衰减指数
+  obstacle_penalty_db: 6.0  # 每穿过一个障碍格扣多少 dB
+  snr_threshold_db: -20.0   # outage 阈值
+  eps_m: 0.05               # 避免 log(0) 的小量
 
 logging:
   out_dir: "outputs"

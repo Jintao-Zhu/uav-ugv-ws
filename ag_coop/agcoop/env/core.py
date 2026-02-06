@@ -46,6 +46,10 @@ class SystemState:
     deadline_miss: int = 0
     tardiness_sum: int = 0
 
+    # 通信指标累计
+    snr_sum: float = 0.0
+    snr_min: float = float('inf')
+
     # 内部计数器
     _next_task_id: int = 0
 
@@ -135,11 +139,19 @@ class AGCoopEnv:
 
         # 通信配置
         self.comm_enabled = config['comm']['enabled']
-        self.snr_threshold = config['comm'].get('snr_threshold', 0.0)
+        self.snr_threshold = config['comm'].get('snr_threshold_db', -20.0)
+
+        # 初始化通信模型
+        if self.comm_enabled:
+            from agcoop.comm import CommConfig
+            self.comm_config = CommConfig.from_dict(config['comm'])
+        else:
+            self.comm_config = None
 
         # 地图配置
         self.map_path = config['episode'].get('map_path', 'none')
         self.map_hash = None  # 延迟计算（在 reset 时）
+        self.grid_map = None  # 地图对象（如果加载）
 
         # 决策周期
         self.decision_period = config['episode'].get('decision_period', 5)
@@ -183,6 +195,17 @@ class AGCoopEnv:
         # 重置随机数生成器（保证可复现）
         self.rng = np.random.RandomState(self.seed)
 
+        # 加载地图（如果指定）
+        if self.map_path != 'none' and self.grid_map is None:
+            try:
+                from agcoop.map import auto_load_map
+                self.grid_map = auto_load_map(self.map_path)
+                print(f"地图加载成功: {self.map_path} ({self.grid_map.width}x{self.grid_map.height})")
+            except Exception as e:
+                print(f"警告：无法加载地图 {self.map_path}: {e}")
+                print("将使用简单随机通信模型")
+                self.grid_map = None
+
         # 初始化状态
         self.state = SystemState()
         self.state.t = 0
@@ -202,6 +225,10 @@ class AGCoopEnv:
         self.state.deadline_miss = 0
         self.state.tardiness_sum = 0
         self.state._next_task_id = 0
+
+        # 重置通信指标
+        self.state.snr_sum = 0.0
+        self.state.snr_min = float('inf')
 
         # 重置日志跟踪变量
         self._prev_tasks_completed = 0
@@ -270,12 +297,12 @@ class AGCoopEnv:
         # 任务完成（Day1 简单规则：如果任务在 (0,0) 附近则立即完成）
         self._complete_tasks_simple()
 
-        # 计算 outage（Day1: 简单随机，但可复现）
-        self._update_outage()
+        # 计算通信指标（使用真实通信模型）
+        snr_best, outage = self._update_outage()
 
         # 记录日志（如果启用）
         if self.enable_logging and self.trace_logger:
-            self._log_step()
+            self._log_step(snr_best, outage)
 
         # 检查是否结束
         done = self.state.t >= self.horizon_steps
@@ -333,18 +360,55 @@ class AGCoopEnv:
                 # 完成任务
                 self.state.complete_task(task.task_id, self.state.t)
 
-    def _update_outage(self) -> None:
+    def _update_outage(self) -> Tuple[float, bool]:
         """
-        更新 outage 指标（Day1 简单版本）
+        更新 outage 指标（使用真实通信模型）
 
-        Day1: 以 10% 概率发生 outage（可复现）
-        Day2+ 会根据真实的通信模型计算。
+        Returns:
+            (snr_best, outage) 元组
         """
-        if self.comm_enabled:
+        if not self.comm_enabled or self.comm_config is None:
+            # 通信未启用，返回默认值
+            return 0.0, False
+
+        # 需要地图来计算通信
+        # Day1: 如果没有加载地图，使用简单随机模型
+        if not hasattr(self, 'grid_map') or self.grid_map is None:
             # 简单随机 outage（10% 概率）
-            if self.rng.random() < 0.1:
+            outage = (self.rng.random() < 0.1)
+            if outage:
                 self.state.outage_steps += 1
-        # 如果 comm 未启用，outage 保持为 0
+            return 0.0, outage
+
+        # 使用真实通信模型
+        from agcoop.comm import compute_best_snr
+
+        # 获取 UAV 位置（在 UGV 上）
+        uav_ugv_id = self.state.uav_onboard_ugv_id
+        uav_world_pos = self.state.ugv_positions[uav_ugv_id]
+
+        # 转换为 cell 坐标
+        uav_cell = self.grid_map.world_to_cell(uav_world_pos[0], uav_world_pos[1])
+
+        # 获取所有 UGV 的 cell 坐标
+        ugv_cells = []
+        for ugv_pos in self.state.ugv_positions:
+            ugv_cell = self.grid_map.world_to_cell(ugv_pos[0], ugv_pos[1])
+            ugv_cells.append(ugv_cell)
+
+        # 计算最佳 SNR
+        snr_best, best_ugv_id, outage = compute_best_snr(
+            uav_cell, ugv_cells, self.grid_map, self.comm_config
+        )
+
+        # 更新累计指标
+        if outage:
+            self.state.outage_steps += 1
+
+        self.state.snr_sum += snr_best
+        self.state.snr_min = min(self.state.snr_min, snr_best)
+
+        return snr_best, outage
 
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -389,8 +453,13 @@ class AGCoopEnv:
 
         return "\n".join(lines)
 
-    def _log_step(self) -> None:
-        """记录当前步的日志到 trace.jsonl"""
+    def _log_step(self, snr_best: float = 0.0, outage: bool = False) -> None:
+        """记录当前步的日志到 trace.jsonl
+
+        Args:
+            snr_best: 当前步的最佳 SNR（dB）
+            outage: 当前步是否发生 outage
+        """
         if self.state is None or self.trace_logger is None:
             return
 
@@ -399,8 +468,7 @@ class AGCoopEnv:
         self._prev_tasks_completed = self.state.tasks_completed
 
         # 计算当前步是否发生 outage
-        outage_this_step = 1 if (self.state.outage_steps > self._prev_outage_steps) else 0
-        self._prev_outage_steps = self.state.outage_steps
+        outage_this_step = 1 if outage else 0
 
         # 跟踪 outage 连续性
         if outage_this_step:
@@ -421,7 +489,7 @@ class AGCoopEnv:
             'num_active_tasks': len(self.state.get_active_tasks()),
             'task_completed_ids': [],  # Day1 占位
             'outage': outage_this_step,
-            'snr_best': 0.0,  # Day1 占位
+            'snr_best': round(snr_best, 2),  # 真实 SNR 值
             'decision_step': decision_step,
             'chosen_task_id': None,  # Day1 占位
             'chosen_rendezvous': None,  # Day1 占位
@@ -452,6 +520,10 @@ class AGCoopEnv:
         completion_rate = (tasks_completed / total_tasks * 100) if total_tasks > 0 else 0.0
         deadline_miss_rate = (deadline_miss / tasks_completed * 100) if tasks_completed > 0 else 0.0
         mean_tardiness = (tardiness_sum / deadline_miss) if deadline_miss > 0 else 0.0
+
+        # 计算 SNR 统计
+        snr_best_mean = (self.state.snr_sum / steps) if steps > 0 else 0.0
+        snr_best_min = self.state.snr_min if self.state.snr_min != float('inf') else 0.0
 
         # 生成 run_id（如果未指定）
         if self.run_id is None:
@@ -484,8 +556,8 @@ class AGCoopEnv:
             'outage_percent': round(outage_percent, 2),
             'max_outage_streak': self._max_outage_streak,
             'snr_threshold': self.snr_threshold,
-            'snr_best_mean': 0.0,  # Day1 占位
-            'snr_best_min': 0.0,   # Day1 占位
+            'snr_best_mean': round(snr_best_mean, 2),
+            'snr_best_min': round(snr_best_min, 2),
 
             # D. 规划与执行（预留字段）
             'mapf_calls': 0,

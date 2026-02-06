@@ -1,0 +1,25 @@
+episode:
+  horizon_steps: 200
+  decision_period: 5
+  map_path: maps/map_01.map
+  seed: 0
+robots:
+  n_ugv: 3
+  n_uav: 1
+tasks:
+  enabled: true
+  arrival_rate: 0.1
+  deadline_min: 80
+  deadline_max: 160
+  top_m: 5
+comm:
+  enabled: true
+  tx_power_db: 0.0
+  pathloss_n: 2.0
+  obstacle_penalty_db: 6.0
+  snr_threshold_db: -5.0
+  eps_m: 0.05
+logging:
+  out_dir: outputs
+  save_trace: true
+  save_metrics: true

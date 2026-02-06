@@ -1,0 +1,50 @@
+{
+  "map_info": {
+    "width": 10,
+    "height": 10,
+    "resolution": 0.2,
+    "origin": [
+      0.0,
+      0.0
+    ],
+    "free_cells": 56
+  },
+  "ugv_positions": {
+    "count": 2,
+    "cells": [
+      {
+        "i": 1,
+        "j": 1
+      },
+      {
+        "i": 8,
+        "j": 8
+      }
+    ],
+    "world": [
+      {
+        "x": 0.30000000000000004,
+        "y": 0.30000000000000004
+      },
+      {
+        "x": 1.7000000000000002,
+        "y": 1.7000000000000002
+      }
+    ]
+  },
+  "comm_config": {
+    "tx_power_db": 0.0,
+    "pathloss_n": 2.0,
+    "obstacle_penalty_db": 6.0,
+    "snr_threshold_db": -20.0,
+    "eps_m": 0.05
+  },
+  "snr_statistics": {
+    "min": -11.5,
+    "max": 26.02,
+    "mean": 1.95,
+    "std": 6.85,
+    "outage_count": 0,
+    "outage_percent": 0.0
+  }
+}
