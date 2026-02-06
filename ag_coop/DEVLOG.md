@@ -1,5 +1,617 @@
 # 开发日志
 
+## 2026-02-07 00:15
+
+### Day4 指标扩展：补强统计体系 ✅
+
+**修改文件：**
+- `agcoop/tasks/manager.py` - 扩展 `get_stats()` 方法
+- `tests/test_day4_validation.py` - 更新验收测试输出新指标
+
+**新增指标（6 个）：**
+
+1. **完成时间分布**
+   - `mean_completion_time`：平均完成时间（completed_t - release_t）
+   - `p95_completion_time`：95 分位完成时间
+
+2. **Slack 分析**（deadline 松弛度）
+   - `mean_slack_at_assignment`：分配时的 slack（deadline_t - assigned_t）
+   - `mean_slack_at_completion`：完成时的 slack（deadline_t - completed_t）
+
+3. **系统拥塞程度**
+   - `avg_active_tasks`：每步 active 任务数的平均值
+   - `active_tasks_end`：episode 结束时剩余的 active 任务数
+
+**验收结果（ar=0.1, dl=[25,60], 500 步）：**
+
+```
+任务统计:
+  total_generated: 47
+  total_completed: 35
+  total_expired: 11
+  completion_rate: 74.47%
+  miss_rate: 23.40%
+
+完成时间分布:
+  mean_completion_time: 20.63 步
+  p95_completion_time: 43 步
+
+Slack 分析:
+  mean_slack_at_assignment: 32.40 步（分配时还有 32 步余量）
+  mean_slack_at_completion: 22.89 步（完成时还剩 23 步余量）
+
+系统拥塞程度:
+  avg_active_tasks: 1.49（平均只有 1-2 个任务在池中）
+  active_tasks_end: 0（episode 结束时清空）
+```
+
+**关键发现：**
+
+1. **mean_tardiness=0.0 的原因**：
+   - 当前系统是"超期即丢弃"体系（expire_overdue_tasks 在 deadline 时刻直接过期）
+   - EDF 策略确保优先完成 deadline 最近的任务
+   - `mean_slack_at_completion=22.89` 说明完成的任务都有充足余量
+
+2. **系统负载合理**：
+   - `avg_active_tasks=1.49` 说明系统不拥塞
+   - `mean_completion_time=20.63` 远小于 `deadline_range=[25,60]`
+   - 过期的 11 个任务主要是因为"来得晚 + deadline 紧"
+
+3. **为 Day5 做好准备**：
+   - 这些指标会在 Day5 引入真实 UAV 运动后，清晰解释 miss 上升的原因
+   - 例如：`mean_completion_time` 增加 → 路径规划耗时增加
+   - 例如：`avg_active_tasks` 增加 → 系统开始拥塞
+
+**指标口径确认：**
+- **miss_rate** = expired / total_added（任务在 deadline 前未完成 → 过期）
+- **tardiness** = max(0, completed_t - deadline_t)（超期完成的延迟量）
+- 当前系统几乎不会出现"超期完成"，而是"超期未完成 → 过期"
+
+---
+
+## 2026-02-06 23:30
+
+### Day4 Step 6：任务负载校准 ✅
+
+**新增文件：**
+- `scripts/sweep_task_load.py` - 任务负载校准脚本
+
+**修改文件：**
+- `configs/default.yaml` - 更新任务参数（arrival_rate: 0.2 → 0.1）
+
+**校准目标：**
+找到合适的任务参数，使 miss_rate 在 10%-40% 之间（有压力但不至于全崩）
+
+**扫描参数：**
+- `arrival_rate`: {0.05, 0.1, 0.2, 0.3}
+- `deadline_range`: {(40,80), (25,60), (15,40)}
+- `horizon_steps`: 500
+- `seeds`: {42, 43, 44, 45, 46}（5 个 seed 取平均）
+- `map`: map_01.map
+- `policy`: earliest_deadline
+
+**校准结果表格：**
+
+| Arrival Rate | [15,40] | [25,60] | [40,80] |
+|--------------|---------|---------|---------|
+| 0.05 | 23.2 / 9.0% / 0.0 | 22.8 / 1.2% / 0.0 | 22.0 / 0.0% / 0.0 |
+| **0.10** | 29.2 / 39.3% / 0.0 | **32.0 / 28.5% / 0.0** ✅ | 40.0 / 11.0% / 0.0 |
+| 0.20 | 20.4 / 75.0% / 0.0 | 22.0 / 69.5% / 0.0 | 27.8 / 61.2% / 0.0 |
+| 0.30 | 14.0 / 84.3% / 0.0 | 15.6 / 81.1% / 0.0 | 18.6 / 75.0% / 0.0 |
+
+格式：completed / miss_rate / tardiness
+
+**🎯 推荐参数（最佳）：**
+- `arrival_rate: 0.10`
+- `deadline_min: 25`
+- `deadline_max: 60`
+- **miss_rate: 28.47%** ✅（在目标区间 10%-40% 内）
+- completion_rate: 67.07%
+- 平均完成任务数：32.0 / 500 步
+
+**其他候选参数：**
+1. `arrival_rate=0.10, deadline=[40,80]` → miss_rate=11.0%（偏低，压力不够）
+2. `arrival_rate=0.10, deadline=[15,40]` → miss_rate=39.3%（偏高，接近上限）
+
+**分析：**
+
+1. **arrival_rate=0.05**：
+   - 任务太少，miss_rate 接近 0%
+   - 没有压力，不适合对比实验
+
+2. **arrival_rate=0.10** ✅：
+   - 最佳选择，miss_rate 在 11%-39% 之间
+   - deadline=[25,60] 时 miss_rate=28.5%（最平衡）
+   - 完成任务数适中（32 个）
+
+3. **arrival_rate=0.20**：
+   - 任务太多，miss_rate > 60%
+   - 压力过大，大部分任务过期
+
+4. **arrival_rate=0.30**：
+   - 任务过载，miss_rate > 75%
+   - 几乎全崩，不适合实验
+
+**配置更新：**
+- `arrival_rate`: 0.2 → 0.1（降低任务生成率）
+- 添加任务负载 profile 注释：
+  - light: arrival_rate=0.05 (miss_rate=1.2%)
+  - default: arrival_rate=0.10 (miss_rate=28.5%) ✅
+  - heavy: arrival_rate=0.20 (miss_rate=69.5%)
+
+**输出文件：**
+- `outputs/task_load_sweep/sweep_results.json` - 完整校准结果
+
+**验收：**
+- ✅ 找到合适的参数（miss_rate 在 10%-40% 之间）
+- ✅ 扫描了 4x3=12 种参数组合（每种 5 个 seed）
+- ✅ 总共运行 60 个 episode
+- ✅ 推荐参数已更新到 configs/default.yaml
+
+**设计特点：**
+- 系统化扫描（arrival_rate x deadline_range）
+- 多 seed 平均（减少随机性）
+- 清晰的结果表格（便于对比）
+- 自动推荐最佳参数
+
+**后续实验建议：**
+- 使用 default profile（arrival_rate=0.1, deadline=[25,60]）作为基准
+- 对比不同策略（EDF vs Random）时使用相同参数
+- 如需调整难度，使用 light/heavy profile
+
+---
+
+## 2026-02-06 23:00
+
+### Day4 Step 5：打通 deadline 指标（metrics + trace）✅
+
+**新增文件：**
+- `tests/test_day4_integration.py` - Day4 任务系统集成测试
+
+**集成测试内容：**
+- TaskStream + TaskManager + VirtualUAVExecutor 完整流程
+- 任务生成、分配、完成、过期
+- Metrics 统计和 Trace 记录
+
+**Metrics 指标（已实现）：**
+
+1. **任务统计**：
+   - `total_generated` - 总生成任务数
+   - `total_dropped` - 因容量满而丢弃的任务数
+   - `total_added` - 总添加任务数
+   - `total_completed` - 总完成任务数
+   - `total_expired` - 总过期任务数
+
+2. **任务指标**：
+   - `completion_rate` - 完成率（completed / added）
+   - `expiration_rate` - 过期率（expired / added）
+   - `deadline_miss_rate` - Deadline miss 率（expired / added）
+
+3. **Tardiness 指标**：
+   - `total_tardiness` - 总延迟时间
+   - `mean_tardiness` - 平均延迟时间（tardiness / completed）
+
+4. **完成时间指标**：
+   - `mean_completion_time` - 平均完成时间（completed_t - release_t）
+   - `p95_completion_time` - P95 完成时间
+
+**Trace 字段（已实现）：**
+
+每步记录：
+- `t` - 当前时刻
+- `new_task_ids` - 本步生成的任务 ID 列表
+- `assigned_task_id` - 本步分配的任务 ID（如果有）
+- `completed_task_ids` - 本步完成的任务 ID 列表
+- `uav_remaining_time` - UAV 剩余执行时间
+- `num_active` - 活跃任务数
+- `num_assigned` - 已分配任务数
+- `num_done` - 已完成任务数
+- `num_expired` - 已过期任务数
+
+**集成测试结果（200 步，arrival_rate=0.2）：**
+
+任务统计：
+- 生成 43 个任务
+- 完成 12 个任务（27.91%）
+- 过期 23 个任务（53.49%）
+- 剩余 8 个活跃任务
+
+任务指标：
+- completion_rate: 27.91%
+- expiration_rate: 53.49%
+- deadline_miss_rate: 53.49%
+
+完成时间：
+- mean_completion_time: 33.92 步
+- p95_completion_time: 56.00 步
+
+Tardiness：
+- total_tardiness: 0（所有完成的任务都按时完成）
+- mean_tardiness: 0.00
+
+**Trace 事件示例：**
+- t=1: 生成任务 0
+- t=17: 完成任务 0（remaining_time=8）
+- t=25: 完成任务 1（remaining_time=10）
+- t=35: 完成任务 2（remaining_time=14）
+
+**验收：**
+- ✅ Episode 内出现完成任务（12 个）
+- ✅ Episode 内出现超期任务（23 个）
+- ⚠️ 没有延迟完成（所有完成的任务都按时完成）
+- ⚠️ completion_rate 较低（27.91%）
+
+**分析：**
+- Deadline 设置较紧（25-60 步），导致很多任务过期
+- UAV 执行速度有限（Chebyshev 距离 + service_time），无法完成所有任务
+- 完成的任务都按时完成（说明 EDF 策略有效）
+- 这是合理的结果，符合资源受限场景
+
+**设计特点：**
+- 完整的 metrics 统计（8 个指标）
+- 详细的 trace 记录（9 个字段）
+- 可通过 grep trace 查看任务分配/完成过程
+- 支持多种策略对比（EDF vs Random）
+
+**后续优化方向：**
+- 调整 deadline 范围（放宽到 40-80）以提高 completion_rate
+- 添加多 UAV 支持（提高任务处理能力）
+- 添加任务优先级（重要任务优先完成）
+- 集成到 env 中（替换旧的 Task 类）
+
+---
+
+## 2026-02-06 22:30
+
+### Day4 Step 4：实现虚拟 UAV 执行器 ✅
+
+**新增文件：**
+- `agcoop/tasks/executor.py` - VirtualUAVExecutor 虚拟执行器
+- `tests/test_executor.py` - VirtualUAVExecutor 单元测试
+
+**修改文件：**
+- `agcoop/tasks/__init__.py` - 导出 VirtualUAVExecutor 和 estimate_travel_time
+
+**VirtualUAVExecutor 设计（Day4 简化版）：**
+
+**目的：** 保证任务能完成，验证任务系统链路（Day5 会替换为真实 UAV 运动）
+
+**执行器状态：**
+- `uav_cell` - UAV 当前位置（虚拟，不真实移动）
+- `uav_busy` - UAV 是否正在执行任务
+- `current_task_id` - 当前执行的任务 ID
+- `remaining_time` - 完成当前任务还需要的步数
+- `service_time` - 到点服务时间（步数）
+
+**任务耗时估算（简单稳定）：**
+```python
+def estimate_travel_time(uav_cell, task_cell, service_time):
+    # Chebyshev 距离（8-连通最短路径）
+    dx = abs(task_cell[1] - uav_cell[1])
+    dy = abs(task_cell[0] - uav_cell[0])
+    travel_time = max(dx, dy)
+
+    return travel_time + service_time
+```
+
+**设计选择：**
+- 使用 Chebyshev 距离（max(|dx|, |dy|)）作为飞行时间
+- 不依赖图搜索，简单稳定
+- Day5 会替换为真实路径规划 + 运动学
+
+**执行逻辑（每步 step）：**
+
+1. **如果 UAV 忙碌**：
+   - 检查当前任务是否已过期（如果过期，放弃执行）
+   - `remaining_time -= 1`
+   - 如果 `remaining_time == 0`：
+     - 完成任务 → `mark_completed(task_id, t)`
+     - 更新 UAV 位置（虚拟移动到任务位置）
+     - 重置状态（`uav_busy = False`）
+
+2. **如果 UAV 空闲**：
+   - 从 `TaskManager.get_top_m(...)` 获取 Top-M 任务
+   - 选择第一个任务（按策略排序后的第一个）
+   - 估算完成时间 → `estimate_travel_time(...)`
+   - 分配任务 → `mark_assigned(task_id, t)`
+   - 设置 `uav_busy = True`, `remaining_time = total_time`
+
+**关键修复：**
+- 添加任务过期检查（执行中的任务可能被 `expire_overdue_tasks()` 过期）
+- 如果任务已过期，放弃执行并重置状态
+- 避免尝试完成已过期的任务（会抛出异常）
+
+**单元测试（7 个测试，全部通过）：**
+- ✅ 飞行时间估算（Chebyshev 距离）
+- ✅ 基本任务执行流程（分配 → 执行 → 完成）
+- ✅ 连续执行多个任务（3 个任务按顺序完成）
+- ✅ 延迟完成和 tardiness 计算（deadline=10, completed_t=12, tardiness=2）
+- ✅ 任务过期处理（过期任务被放弃，继续执行下一个）
+- ✅ EDF 策略选择任务（选择最早 deadline 的任务）
+- ✅ reset() 重置执行器
+
+**测试结果示例：**
+- 基本流程：任务 0 在 t=7 完成（travel=5 + service=2）
+- 连续任务：3 个任务在 t=4, 9, 14 完成
+- 延迟完成：deadline=10, completed_t=12, tardiness=2
+- 任务过期：任务 0 过期，任务 1 完成（expired=1, completed=1）
+
+**验收：**
+- ✅ Episode 内出现完成任务（completion_rate=100%）
+- ✅ Episode 内出现超期任务（expiration_rate > 0）
+- ✅ Episode 内出现 tardiness > 0（延迟完成）
+- ✅ UAV 状态转换正确（空闲 → 忙碌 → 空闲）
+- ✅ 任务完成后 UAV 位置更新
+
+**设计特点：**
+- 简单稳定（不依赖复杂路径规划）
+- 可预测（Chebyshev 距离确定性）
+- 易于替换（Day5 只需替换 `estimate_travel_time` 和移动逻辑）
+- 完整的过期处理（执行中的任务也能过期）
+
+**Day5 升级计划：**
+- 替换 `estimate_travel_time` 为真实路径规划（BFS/A*）
+- 添加真实 UAV 运动（逐步移动到目标）
+- 添加运动学约束（速度、加速度）
+- 集成通信模型（飞行中检查 outage）
+
+---
+
+## 2026-02-06 22:00
+
+### Day4 Step 3：实现 TaskManager（任务池 + Top-M + 统计）✅
+
+**新增文件：**
+- `agcoop/tasks/manager.py` - TaskManager 任务管理器
+- `tests/test_task_manager.py` - TaskManager 单元测试
+
+**修改文件：**
+- `agcoop/tasks/__init__.py` - 导出 TaskManager
+
+**TaskManager 核心功能：**
+
+1. **任务池管理**（按状态分类）：
+   - `active_ids` - 活跃任务（可被分配）
+   - `assigned_ids` - 已分配任务（正在执行）
+   - `done_ids` - 已完成任务
+   - `expired_ids` - 已过期任务
+
+2. **任务操作**：
+   - `add_task(task)` - 添加任务（容量限制）
+   - `mark_assigned(task_id, t)` - 标记为已分配
+   - `mark_completed(task_id, t)` - 标记为已完成（自动计算 tardiness）
+   - `expire_overdue_tasks(t)` - 过期所有超过 deadline 的任务
+
+3. **Top-M 任务选择**（两种策略）：
+   - `get_top_m(t, policy="earliest_deadline")` - EDF 策略
+   - `get_top_m(t, policy="random")` - Random 策略（对照用）
+
+4. **查询接口**：
+   - `get_active_tasks()` / `num_active` - 活跃任务
+   - `get_assigned_tasks()` / `num_assigned` - 已分配任务
+   - `get_done_tasks()` / `num_done` - 已完成任务
+   - `get_expired_tasks()` / `num_expired` - 已过期任务
+   - `get_task(task_id)` / `has_task(task_id)` - 单个任务查询
+
+5. **统计信息**：
+   - `total_added` - 总添加任务数
+   - `total_completed` - 总完成任务数
+   - `total_expired` - 总过期任务数
+   - `completion_rate` - 完成率
+   - `expiration_rate` - 过期率
+   - `total_tardiness` - 总延迟时间
+   - `avg_tardiness` - 平均延迟时间
+
+**状态转换逻辑：**
+- `active` → `assigned` → `done`（正常流程）
+- `active` / `assigned` → `expired`（超过 deadline）
+- 完成时自动计算 `tardiness = max(0, completed_t - deadline_t)`
+
+**Top-M 策略实现：**
+
+1. **EDF (Earliest Deadline First)**：
+   - 按 `deadline_t` 升序排序
+   - 返回前 `top_m` 个任务
+   - 适合：最小化 miss rate
+
+2. **Random**：
+   - 随机打乱任务顺序
+   - 返回前 `top_m` 个任务
+   - 适合：对照实验（baseline）
+   - 使用独立的 `random.Random(seed)` 保证可复现
+
+**单元测试（8 个测试，全部通过）：**
+- ✅ 任务添加和容量限制（max_active=5，第 6 个添加失败）
+- ✅ 任务状态转换（active → assigned → done）
+- ✅ 延迟完成的 tardiness 计算（deadline=100, completed_t=120, tardiness=20）
+- ✅ 任务过期处理（active 和 assigned 都能过期）
+- ✅ Top-M 任务选择（EDF 策略，按 deadline 排序）
+- ✅ Top-M 任务选择（Random 策略，可复现）
+- ✅ 统计信息正确性（completion_rate, avg_tardiness 等）
+- ✅ reset() 重置管理器
+
+**测试结果示例：**
+- 容量限制：添加 5 个任务成功，第 6 个失败
+- EDF Top-3：[1, 3, 0]（deadline: [50, 75, 100]）
+- Random Top-3：[3, 1, 2]（重置后可复现）
+- 统计：completion_rate=60%, expiration_rate=40%, avg_tardiness=6.67
+
+**验收：**
+- ✅ 任务状态流转正确（active → assigned → done）
+- ✅ 完成后从 active 移到 done
+- ✅ tardiness 计算正确（延迟完成时）
+- ✅ 过期任务正确处理（active 和 assigned 都能过期）
+- ✅ Top-M 策略正确（EDF 和 Random）
+- ✅ 统计信息完整准确
+
+**设计特点：**
+- 按状态分类管理（4 个列表）
+- 完整的状态转换验证（防止非法转换）
+- 独立的随机数生成器（Random 策略可复现）
+- 丰富的统计信息（completion_rate, tardiness 等）
+- 支持 reset() 重置（多 episode 实验）
+
+---
+
+## 2026-02-06 21:30
+
+### Day4 Step 2：实现可复现的在线任务流 TaskStream ✅
+
+**新增文件：**
+- `agcoop/tasks/stream.py` - TaskStream 任务流生成器
+- `tests/test_task_stream.py` - TaskStream 单元测试
+
+**修改文件：**
+- `agcoop/tasks/__init__.py` - 导出 TaskStream 和 TaskConfig
+- `configs/default.yaml` - 更新任务配置
+
+**TaskConfig 配置项（已写入 config）：**
+```yaml
+tasks:
+  enabled: true
+  arrival_process: "bernoulli"  # 到达过程类型（目前仅支持 bernoulli）
+  arrival_rate: 0.2             # 每步生成任务概率（0.0-1.0）
+  deadline_min: 25              # 最小 deadline（步数）
+  deadline_max: 60              # 最大 deadline（步数）
+  max_active: 20                # 任务池最大容量（满了丢弃新任务）
+  top_m: 5                      # Top-M 任务数量（用于策略）
+  service_time: 2               # 到点服务时间（步数）
+```
+
+**配置调整说明：**
+- 原 `deadline_min/max: 80-160` 太宽松，改为 `25-60` 以便观察 miss/tardiness
+- 新增 `arrival_process` 字段（目前仅支持 "bernoulli"）
+- 新增 `max_active` 字段（任务池容量限制）
+- 新增 `service_time` 字段（到点服务时间）
+- `arrival_rate` 从 0.1 提高到 0.2（Day4 用高一点保证有数据）
+
+**TaskStream 生成规则：**
+
+1. **Bernoulli 过程**：
+   - 每步以概率 `arrival_rate` 生成 0 或 1 个任务
+   - 使用独立的随机数生成器（`random.Random(seed)`）
+
+2. **任务位置**：
+   - 从 `free_cells` 中均匀随机采样
+   - 可选：排除 UGV 占用格（后续可加）
+
+3. **Deadline 生成**：
+   - `deadline_t = t + randint(deadline_min, deadline_max)`
+   - 保证 deadline 在配置范围内
+
+4. **容量限制**：
+   - 当 `current_active_count >= max_active` 时，丢弃新任务
+   - 统计 `total_dropped` 和 `drop_rate`
+
+**可复现性保证：**
+- 使用独立的 `random.Random(seed)` 实例
+- 相同 seed 生成相同的任务序列（id, cell, deadline 完全一致）
+- `reset()` 方法重置生成器状态
+
+**核心方法：**
+- `generate_tasks(t, current_active_count)` - 生成当前时刻的任务
+- `reset()` - 重置生成器（用于新 episode）
+- `get_stats()` - 获取统计信息（total_generated, total_dropped, drop_rate）
+
+**单元测试（6 个测试，全部通过）：**
+- ✅ 任务生成的可复现性（相同 seed 生成相同任务序列）
+- ✅ arrival_rate 控制生成概率（0.1, 0.3, 0.5 测试通过）
+- ✅ 任务池容量限制（max_active=5，丢弃率 75%）
+- ✅ deadline 范围正确性（25-60 步）
+- ✅ 任务位置从 free_cells 采样（分布均匀）
+- ✅ reset() 重置生成器（两次运行一致）
+
+**测试结果示例：**
+- `arrival_rate=0.1`: 生成 82/1000 任务，实际率 0.082（误差 1.8%）
+- `arrival_rate=0.3`: 生成 298/1000 任务，实际率 0.298（误差 0.2%）
+- `arrival_rate=0.5`: 生成 498/1000 任务，实际率 0.498（误差 0.2%）
+
+**验收：**
+- ✅ 相同 seed 重跑，生成的任务序列（id/cell/deadline）完全一致
+- ✅ arrival_rate 控制正确（统计误差 < 3%）
+- ✅ 容量限制生效（满了丢弃新任务）
+- ✅ deadline 范围正确（25-60 步）
+- ✅ 任务位置从 free_cells 采样
+
+**设计特点：**
+- 独立的随机数生成器（不影响全局 random）
+- 完整的统计信息（生成数、丢弃数、丢弃率）
+- 支持 reset() 重置（多 episode 实验）
+- 简洁的 API（generate_tasks 一步到位）
+
+---
+
+## 2026-02-06 21:00
+
+### Day4 Step 1：定义 Task 数据结构 ✅
+
+**新增文件：**
+- `agcoop/tasks/task.py` - Task 数据结构
+- `agcoop/tasks/__init__.py` - 任务模块导出
+- `tests/test_task.py` - Task 单元测试
+
+**Task 字段（已固定，后续不改）：**
+```python
+@dataclass
+class Task:
+    id: int                          # 任务唯一标识符
+    release_t: int                   # 任务到达时刻（步数）
+    cell: Tuple[int, int]           # 任务位置 (i, j) = (row, col)
+    deadline_t: int                  # 任务截止时刻（步数）
+    assigned_t: Optional[int]        # 任务分配时刻（None=未分配）
+    completed_t: Optional[int]       # 任务完成时刻（None=未完成）
+    status: str                      # "active", "assigned", "done", "expired"
+    tardiness: int                   # 延迟时间 max(0, completed_t - deadline_t)
+```
+
+**状态转换：**
+- `active` → `assigned` → `done`（正常流程）
+- `active` / `assigned` → `expired`（超过 deadline 未完成）
+
+**核心方法：**
+1. **状态管理**：
+   - `assign(t)` - 分配任务
+   - `complete(t)` - 完成任务（自动计算 tardiness）
+   - `expire(t)` - 任务过期
+
+2. **状态查询**：
+   - `is_active()` / `is_assigned()` / `is_done()` / `is_expired()`
+   - `time_to_deadline(t)` - 计算剩余时间
+
+3. **JSON 序列化**：
+   - `to_dict()` / `to_json()` - 序列化
+   - `from_dict()` / `from_json()` - 反序列化
+   - ✅ 可直接写入 trace.jsonl
+
+**坐标约定：**
+- `cell = (i, j)` 其中 `i=row(y)`, `j=col(x)`
+- 与项目其他部分（地图、通信模型）保持一致
+- JSON 序列化时转为 list，反序列化时恢复为 tuple
+
+**单元测试（6 个测试，全部通过）：**
+- ✅ Task 创建和字段验证
+- ✅ 状态转换（active → assigned → done）
+- ✅ 过期处理（expired）
+- ✅ JSON 序列化和反序列化
+- ✅ 辅助方法（time_to_deadline 等）
+- ✅ 坐标约定验证
+
+**验收：**
+- ✅ Task 可 JSON 序列化（trace 里可写）
+- ✅ 字段验证正确（deadline > release）
+- ✅ 状态转换逻辑正确
+- ✅ tardiness 计算正确（延迟完成时）
+- ✅ 坐标约定与项目一致
+
+**设计特点：**
+- 使用 dataclass 简化代码
+- 完整的字段验证（__post_init__）
+- 清晰的状态机（4 种状态）
+- 完整的 JSON 序列化支持
+- 丰富的辅助方法
+
+---
+
 ## 2026-02-06 20:30
 
 ### Step 6：阈值校准与一致性检查 ✅

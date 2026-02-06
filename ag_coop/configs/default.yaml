@@ -10,10 +10,17 @@ robots:
 
 tasks:
   enabled: true
-  arrival_rate: 0.1     # 每步到达概率（Day1 先不用也行）
-  deadline_min: 80
-  deadline_max: 160
-  top_m: 5
+  arrival_process: "bernoulli"  # 到达过程类型（目前仅支持 bernoulli）
+  arrival_rate: 0.1             # 每步生成任务概率（校准后：miss_rate=28.5%）
+  deadline_min: 25              # 最小 deadline（步数）
+  deadline_max: 60              # 最大 deadline（步数）
+  max_active: 20                # 任务池最大容量（满了丢弃新任务）
+  top_m: 5                      # Top-M 任务数量（用于策略）
+  service_time: 2               # 到点服务时间（步数）
+  # 任务负载 profile（可选）：
+  # - light: arrival_rate=0.05, deadline=[25,60] (miss_rate=1.2%, 压力很小)
+  # - default: arrival_rate=0.10, deadline=[25,60] (miss_rate=28.5%, 平衡)
+  # - heavy: arrival_rate=0.20, deadline=[25,60] (miss_rate=69.5%, 压力大)
 
 comm:
   enabled: true

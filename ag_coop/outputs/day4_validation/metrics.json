@@ -1,0 +1,16 @@
+{
+  "total_generated": 47,
+  "total_dropped": 0,
+  "total_added": 47,
+  "total_completed": 35,
+  "total_expired": 11,
+  "completion_rate": 0.7446808510638298,
+  "miss_rate": 0.23404255319148937,
+  "mean_tardiness": 0.0,
+  "mean_completion_time": 20.62857142857143,
+  "p95_completion_time": 43,
+  "mean_slack_at_assignment": 32.4,
+  "mean_slack_at_completion": 22.885714285714286,
+  "avg_active_tasks": 1.492,
+  "active_tasks_end": 0
+}
