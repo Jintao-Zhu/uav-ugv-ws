@@ -1,385 +1,214 @@
-# AGCoop: Air-Ground Cooperative Multi-Agent System
+# UAV-UGV 协同系统（ag_coop）
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+基于通信约束和任务流的 UAV-UGV 协同路径规划与任务分配系统。
 
-**AGCoop** 是一个用于研究空地协同多智能体系统的仿真平台，专注于 UAV-UGV 协作场景下的任务分配、路径规划和通信约束问题。
+## 项目概述
 
-## 🎯 项目特点
+本项目实现了一个多机器人协同系统，包含：
+- **UAV（无人机）**：负责执行动态生成的任务
+- **UGV（地面车）**：作为通信中继节点，支持 UAV 与基站通信
+- **任务流**：动态生成的时间敏感任务（带 deadline）
+- **通信模型**：基于距离和障碍物的 SNR 计算
 
-- **完整的仿真环境**：支持多 UGV + 单 UAV 的协同任务执行
-- **真实的通信模型**：考虑信号衰减、遮挡和 outage 约束
-- **灵活的地图支持**：兼容 MovingAI benchmark 和 ROS map_server 格式
-- **可复现的实验**：完整的日志系统和指标输出
-- **模块化设计**：清晰的代码结构，易于扩展
-
-## 📋 目录
-
-- [快速开始](#快速开始)
-- [系统架构](#系统架构)
-- [核心功能](#核心功能)
-- [使用指南](#使用指南)
-- [开发进度](#开发进度)
-- [贡献指南](#贡献指南)
-
-## 🚀 快速开始
-
-### 安装依赖
-
-```bash
-# 克隆仓库
-cd uav-ugv-ws/ag_coop
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
-### 运行示例
-
-```bash
-# 运行一个完整的 episode
-python scripts/run_one_episode.py --seed 42
-
-# 检查地图
-python scripts/inspect_map.py maps/map_01.map --detailed
-
-# 生成候选点
-python scripts/gen_candidates.py maps/map_01.map --visualize
-
-# 测试坐标映射
-python scripts/test_mapping.py maps/map_01.map --test-all
-```
-
-## 🏗️ 系统架构
+## 项目结构
 
 ```
 ag_coop/
 ├── agcoop/                 # 核心代码
-│   ├── env/               # 仿真环境
-│   │   └── core.py        # AGCoopEnv 主类
-│   ├── map/               # 地图模块
-│   │   ├── grid_map.py    # GridMap 数据结构
-│   │   ├── io_text.py     # MovingAI 格式 I/O
-│   │   ├── io_ros.py      # ROS 格式 I/O
-│   │   ├── mapping.py     # 坐标映射（权威实现）
-│   │   └── neighbors.py   # 邻接图和最短路径
-│   └── utils/             # 工具函数
-│       ├── logger.py      # 日志记录
-│       └── io.py          # 文件 I/O
-├── scripts/               # 工具脚本
-│   ├── run_one_episode.py      # 一键运行
-│   ├── inspect_map.py          # 地图检查
-│   ├── gen_candidates.py       # 候选点生成
-│   └── test_mapping.py         # 映射测试
+│   ├── map/               # 地图加载与处理
+│   ├── comm/              # 通信模型（SNR 计算）
+│   ├── tasks/             # 任务系统（Day4）
+│   │   ├── task.py        # Task 数据结构
+│   │   ├── stream.py      # TaskStream 任务流生成器
+│   │   ├── manager.py     # TaskManager 任务管理器
+│   │   └── executor.py    # VirtualUAVExecutor 虚拟执行器
+│   └── env/               # 环境（待实现）
 ├── configs/               # 配置文件
 │   └── default.yaml       # 默认配置
 ├── maps/                  # 地图文件
-│   ├── map_01.map         # MovingAI 格式
-│   └── test_ros.yaml      # ROS 格式
-└── outputs/               # 输出目录
-    └── run_*/             # 实验结果
-        ├── trace.jsonl           # 步骤记录
-        ├── metrics.json          # 最终指标
-        └── config_resolved.yaml  # 完整配置
+│   └── map_01.map         # 测试地图（32x32）
+├── scripts/               # 脚本工具
+│   ├── sweep_comm_threshold.py  # 通信阈值校准
+│   └── sweep_task_load.py       # 任务负载校准
+├── tests/                 # 单元测试
+└── outputs/               # 输出结果
+
 ```
 
-## 🔧 核心功能
+## 开发进度
 
-### 1. 地图系统
+### ✅ Day1：坐标系统与地图加载
+- 实现 `GridMap` 类（支持 `.map` 格式）
+- 统一坐标系：`cell = (i, j)` 其中 `i=row(y), j=col(x)`
+- 单元测试：`test_map.py`
 
-**支持格式：**
-- MovingAI `.map` 格式（标准 MAPF benchmark）
-- ROS `map_server` 格式（`.yaml` + `.pgm`）
-- 简单文本格式（0/1 矩阵）
+### ✅ Day2：通信模型
+- 实现 SNR 计算（距离衰减 + 障碍物惩罚）
+- 公式：`SNR(dB) = P_tx - 10*n*log10(d+ε) - N_obs * penalty`
+- 单元测试：`test_comm.py`
 
-**核心功能：**
-- 自动格式检测和加载
-- 坐标系转换（world ↔ cell）
-- 邻居查询（4-连通/8-连通）
-- BFS 最短路径计算
+### ✅ Day3：通信阈值校准
+- 实现 `sweep_comm_threshold.py` 扫描阈值 vs outage%
+- 校准结果：`snr_threshold_db = -9.0` → outage=14%（平衡）
+- 输出：SNR heatmap + metrics.json
 
-**坐标系约定：**
-```python
-# 内部坐标：(i, j) = (row, col) = (y_index, x_index)
-# - i: 行索引（y 方向，0 = 底部）
-# - j: 列索引（x 方向，0 = 左侧）
-# - origin: cell(0,0) 左下角的世界坐标
+### ✅ Day4：任务系统
+- **Step 1-4**：实现完整任务流水线
+  - `Task`：8 字段数据结构（id, release_t, cell, deadline_t, assigned_t, completed_t, status, tardiness）
+  - `TaskStream`：Bernoulli 到达过程，可复现任务生成
+  - `TaskManager`：任务池管理 + Top-M 选择（EDF/Random 策略）
+  - `VirtualUAVExecutor`：虚拟执行器（Chebyshev 距离估算）
 
-# 世界坐标：(x, y)
-# - x = origin_x + (j + 0.5) * resolution
-# - y = origin_y + (i + 0.5) * resolution
+- **Step 5**：指标与 Trace 集成
+  - 15 个指标：任务统计、完成时间分布、Slack 分析、系统拥塞
+  - Trace 记录：每步的任务事件和状态
+
+- **Step 6**：任务负载校准
+  - 扫描 `arrival_rate × deadline_range`
+  - 推荐参数：`arrival_rate=0.1, deadline=[25,60]` → miss_rate=23.4%
+
+### 🚧 Day5：真实 UAV 运动（计划中）
+- 集成 MAPF 路径规划（CBS/ECBS）
+- 实现真实 UAV 运动（替换虚拟执行器）
+- UAV-UGV 会合机制（rendezvous）
+
+## 快速开始
+
+### 安装依赖
+
+```bash
+pip install numpy pyyaml
 ```
 
-**外部求解器兼容：**
-```python
-from agcoop.map import mapping
+### 运行测试
 
-# 转换为求解器坐标（MovingAI 风格）
-solver_x, solver_y = mapping.to_solver_coords(i, j, height)
+```bash
+# 运行所有测试
+python -m pytest tests/
 
-# 格式化为求解器实例
-instance = mapping.format_solver_instance(starts, goals, height)
+# 运行 Day4 验收测试
+python tests/test_day4_validation.py
 ```
 
-### 2. 仿真环境
+### 任务负载校准
 
-**状态空间：**
-- UGV 位置：`[(x, y), ...]`
-- UAV 状态：当前搭载的 UGV ID
-- 任务池：动态生成的任务列表
-- 通信状态：outage 统计
+```bash
+# 扫描任务参数
+python scripts/sweep_task_load.py
 
-**配置参数：**
+# 输出：outputs/task_load_sweep/sweep_results.json
+```
+
+### 通信阈值校准
+
+```bash
+# 扫描通信阈值
+python scripts/sweep_comm_threshold.py
+
+# 输出：outputs/comm_threshold_sweep/
+```
+
+## 配置说明
+
+配置文件：`configs/default.yaml`
+
+### 任务参数（已校准）
+
 ```yaml
-episode:
-  horizon_steps: 100
-  seed: 42
-  decision_period: 5
-
-robots:
-  n_ugv: 3
-  n_uav: 1
-
 tasks:
   enabled: true
-  arrival_rate: 0.1
-  deadline_min: 20
-  deadline_max: 50
+  arrival_process: "bernoulli"
+  arrival_rate: 0.1             # 每步生成任务概率
+  deadline_min: 25              # 最小 deadline（步数）
+  deadline_max: 60              # 最大 deadline（步数）
+  max_active: 20                # 任务池最大容量
+  top_m: 5                      # Top-M 任务数量
+  service_time: 2               # 到点服务时间（步数）
+```
 
+**任务负载 Profile：**
+- **Light**：`arrival_rate=0.05, deadline=[25,60]` → miss_rate=1.2%（压力很小）
+- **Default**：`arrival_rate=0.10, deadline=[25,60]` → miss_rate=23.4%（平衡）✅
+- **Heavy**：`arrival_rate=0.20, deadline=[25,60]` → miss_rate=69.5%（压力大）
+
+### 通信参数（已校准）
+
+```yaml
 comm:
   enabled: true
-  snr_threshold: 0.0
+  tx_power_db: 0.0              # 基准 SNR
+  pathloss_n: 2.0               # 距离衰减指数
+  obstacle_penalty_db: 6.0      # 每穿过一个障碍格扣多少 dB
+  snr_threshold_db: -9.0        # outage 阈值
+  eps_m: 0.05                   # 避免 log(0) 的小量
 ```
 
-### 3. 日志与指标
+**通信 Profile：**
+- **Relaxed**：`snr_threshold_db=-12.0` → outage=6%（通信宽松）
+- **Default**：`snr_threshold_db=-9.0` → outage=14%（平衡）✅
+- **Strict**：`snr_threshold_db=-7.0` → outage=26%（通信苛刻）
 
-**输出文件：**
+## 指标体系
 
-1. **trace.jsonl** - 每步记录
-```json
-{"t": 1, "ugv_pos": [[0,0],[0,0],[0,0]], "outage": 0, "decision_step": false, ...}
-{"t": 2, "ugv_pos": [[0,0],[0,0],[0,0]], "outage": 1, "decision_step": false, ...}
-```
+### 任务统计（5 个）
+- `total_generated`：生成的任务总数
+- `total_dropped`：因容量满而丢弃的任务数
+- `total_added`：加入任务池的任务数
+- `total_completed`：完成的任务数
+- `total_expired`：过期的任务数
 
-2. **metrics.json** - 最终指标
+### 关键指标（3 个）
+- `completion_rate`：完成率（completed / added）
+- `miss_rate`：错过率（expired / added）
+- `mean_tardiness`：平均延迟（超期完成的延迟量）
+
+### 完成时间分布（2 个）
+- `mean_completion_time`：平均完成时间（completed_t - release_t）
+- `p95_completion_time`：95 分位完成时间
+
+### Slack 分析（2 个）
+- `mean_slack_at_assignment`：分配时的 slack（deadline_t - assigned_t）
+- `mean_slack_at_completion`：完成时的 slack（deadline_t - completed_t）
+
+### 系统拥塞程度（2 个）
+- `avg_active_tasks`：每步 active 任务数的平均值
+- `active_tasks_end`：episode 结束时剩余的 active 任务数
+
+## Day4 验收结果
+
+使用校准后的参数（`arrival_rate=0.1, deadline=[25,60]`, 500 步）：
+
 ```json
 {
-  "run_id": "map_01_N3_seed42_lambda0.1",
-  "method": "static",
-  "planner": "none",
-  "tasks_completed": 15,
-  "completion_rate": 75.0,
-  "outage_percent": 12.5,
-  "max_outage_streak": 3,
-  "runtime_sec": 0.45,
-  ...
+  "total_generated": 47,
+  "total_completed": 35,
+  "total_expired": 11,
+  "completion_rate": 0.7447,
+  "miss_rate": 0.2340,
+  "mean_tardiness": 0.0,
+  "mean_completion_time": 20.63,
+  "p95_completion_time": 43,
+  "mean_slack_at_assignment": 32.40,
+  "mean_slack_at_completion": 22.89,
+  "avg_active_tasks": 1.49,
+  "active_tasks_end": 0
 }
 ```
 
-3. **config_resolved.yaml** - 完整配置（用于复现）
+**关键发现：**
+- ✅ miss_rate=23.40% 在目标范围（10%-40%）
+- ✅ completion_rate=74.47% 合理
+- ✅ mean_tardiness=0.0（EDF 策略有效，所有完成任务都按时）
+- ✅ avg_active_tasks=1.49（系统不拥塞）
 
-## 📖 使用指南
+## 开发日志
 
-### 基本使用
+详细的开发日志请参考 [DEVLOG.md](DEVLOG.md)。
 
-```python
-from agcoop.env import AGCoopEnv
-from agcoop.utils.io import load_config
+## 许可证
 
-# 加载配置
-config = load_config('configs/default.yaml')
+MIT License
 
-# 创建环境
-env = AGCoopEnv(
-    config,
-    output_dir='outputs/my_run',
-    enable_logging=True,
-    method='greedy',
-    planner='PIBT'
-)
+## 联系方式
 
-# 运行仿真
-state = env.reset()
-for t in range(config['episode']['horizon_steps']):
-    state, reward, done, info = env.step()
-    if done:
-        break
-
-# 获取指标
-metrics = env.get_metrics()
-print(f"Tasks completed: {metrics['tasks_completed']}")
-```
-
-### 地图操作
-
-```python
-from agcoop.map import auto_load_map, neighbors, mapping
-
-# 加载地图
-grid_map = auto_load_map('maps/map_01.map')
-
-# 坐标转换
-x, y = grid_map.cell_to_world(5, 10)
-i, j = grid_map.world_to_cell(x, y)
-
-# 最短路径
-path = neighbors.shortest_path((0, 0), (10, 10), grid_map.grid)
-dist = neighbors.shortest_path_length((0, 0), (10, 10), grid_map.grid)
-
-# 距离地图
-dist_map = neighbors.compute_distance_map((5, 5), grid_map.grid)
-```
-
-### 工具脚本
-
-```bash
-# 1. 运行实验
-python scripts/run_one_episode.py \
-    --config configs/default.yaml \
-    --seed 42 \
-    --method greedy \
-    --planner PIBT
-
-# 2. 检查地图
-python scripts/inspect_map.py maps/map_01.map --detailed
-# 输出：map_01_meta.json, map_01_preview.png, map_01_detailed.png
-
-# 3. 生成候选点（用于 coverage baseline）
-python scripts/gen_candidates.py maps/map_01.map \
-    --num-candidates 12 \
-    --min-degree 3 \
-    --visualize
-# 输出：map_01_candidates.json, map_01_candidates_viz.png
-
-# 4. 测试坐标映射
-python scripts/test_mapping.py maps/map_01.map --test-all
-# 输出：map_01_mapping_report.json
-```
-
-## 📊 开发进度
-
-### ✅ Day 1 - 基础框架
-- [x] 环境核心（SystemState, AGCoopEnv）
-- [x] 日志系统（TraceLogger, MetricsLogger）
-- [x] 指标输出（metrics.json, trace.jsonl）
-- [x] 一键运行脚本
-- [x] 可复现性验证
-
-### ✅ Day 2 - 地图系统
-- [x] GridMap 数据结构
-- [x] MovingAI .map 格式支持
-- [x] ROS map_server 格式支持
-- [x] 权威坐标映射系统（100% 往返精度）
-- [x] 邻接图和 BFS 最短路径
-- [x] 地图检查工具（预览图 + 元数据）
-- [x] 映射单元测试（全量/抽样）
-- [x] 候选点生成原型
-- [x] **坐标系统加固与外部兼容性**
-
-### 🚧 Day 3 - 通信模型（计划中）
-- [ ] 信号传播模型（自由空间 + 遮挡）
-- [ ] SNR 计算和 outage 判定
-- [ ] 通信范围可视化
-- [ ] 通信模型验收测试
-
-### 🚧 Day 4+ - 高级功能（计划中）
-- [ ] MAPF 规划器集成
-- [ ] 任务分配策略
-- [ ] 会合点选择
-- [ ] Coverage baseline
-- [ ] 强化学习接口
-
-## 🔬 实验复现
-
-所有实验都可以通过 seed 完全复现：
-
-```bash
-# 运行实验
-python scripts/run_one_episode.py --seed 42 --out_name exp1
-
-# 验证复现性
-python scripts/run_one_episode.py --seed 42 --out_name exp2
-
-# 比较结果
-diff outputs/exp1/metrics.json outputs/exp2/metrics.json
-# 除了 runtime_sec，所有指标应该完全一致
-```
-
-## 📝 配置说明
-
-### 关键参数
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `horizon_steps` | 仿真步数 | 100 |
-| `decision_period` | 决策周期 | 5 |
-| `n_ugv` | UGV 数量 | 3 |
-| `arrival_rate` | 任务到达率 | 0.1 |
-| `deadline_min/max` | 任务截止时间范围 | 20-50 |
-| `snr_threshold` | SNR 阈值 | 0.0 |
-
-### 预留字段
-
-为了保持 schema 稳定性，以下字段已预留（当前为占位值）：
-
-**metrics.json:**
-- `mapf_calls`, `mapf_success_calls`, `mapf_timeout_calls`
-- `rendezvous_success`, `rendezvous_fail`, `emergency_landings`
-- `snr_best_mean`, `snr_best_min`
-
-**trace.jsonl:**
-- `task_completed_ids`, `chosen_task_id`, `chosen_rendezvous`
-- `mapf_called`, `mapf_success`, `mapf_plan_time_ms`
-- `snr_best`
-
-## 🐛 已知问题与注意事项
-
-### 坐标系统
-- **内部坐标**：`(i, j)` = `(row, col)`，`i=0` 在底部
-- **求解器坐标**：`(x, y)` = `(col, row)`，`y=0` 在顶部
-- 使用 `mapping.to_solver_coords()` 进行转换
-
-### 地图格式
-- MovingAI 格式：`@` = 障碍，`.` = 自由
-- ROS 格式：高像素值 = 自由，低像素值 = 障碍
-- 使用 `scripts/inspect_map.py` 验证地图方向
-
-### 测试覆盖
-- 默认抽样测试（快速）
-- 使用 `--test-all` 进行全量测试（完整验证）
-
-## 🤝 贡献指南
-
-欢迎贡献！请遵循以下步骤：
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-### 代码规范
-- 遵循 PEP 8
-- 添加类型注解
-- 编写单元测试
-- 更新 DEVLOG.md
-
-## 📄 许可证
-
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
-## 📧 联系方式
-
-- 项目主页：[GitHub Repository](https://github.com/yourusername/ag_coop)
-- 问题反馈：[Issues](https://github.com/yourusername/ag_coop/issues)
-
-## 🙏 致谢
-
-- MovingAI benchmark 提供的地图格式标准
-- ROS map_server 提供的地图格式规范
-- 所有贡献者和测试者
-
----
-
-**最后更新：** 2026-02-06
-**版本：** Day 2 Complete
+如有问题，请联系项目维护者。
