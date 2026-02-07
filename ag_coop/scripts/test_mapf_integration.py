@@ -271,6 +271,27 @@ def main():
     with open(out_dir / 'init.json', 'w') as f:
         json.dump(init_info, f, indent=2)
 
+    # 保存完整配置（config_resolved.yaml）
+    import yaml
+    config_resolved = {
+        'map': args.map,
+        'n_agents': args.n,
+        'steps': args.steps,
+        'K': args.K,
+        'H': args.H,
+        'budget_ms': args.budget_ms,
+        'seed': args.seed,
+        'goal_switch_period': args.goal_switch_period,
+        'goal_radius': args.goal_radius,
+        'connectivity': 4,
+        'starts': starts,
+        'goals': goals,
+        'map_size': [grid_map.width, grid_map.height],
+        'free_cells': free_count
+    }
+    with open(out_dir / 'config_resolved.yaml', 'w') as f:
+        yaml.dump(config_resolved, f, default_flow_style=False, allow_unicode=True)
+
     # Step 3: 创建 MAPF 规划器
     print("Step 3: 创建 MAPF 规划器")
     planner = MAPFPlanner(

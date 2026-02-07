@@ -1,0 +1,46 @@
+H: 40
+K: 5
+budget_ms: 0
+connectivity: 4
+free_cells: 286
+goal_radius: 15
+goal_switch_period: 50
+goals:
+- !!python/tuple
+  - 14
+  - 9
+- !!python/tuple
+  - 18
+  - 9
+- !!python/tuple
+  - 15
+  - 17
+- !!python/tuple
+  - 18
+  - 10
+- !!python/tuple
+  - 18
+  - 17
+map: map_01
+map_size:
+- 20
+- 20
+n_agents: 5
+seed: 200
+starts:
+- !!python/tuple
+  - 2
+  - 6
+- !!python/tuple
+  - 7
+  - 5
+- !!python/tuple
+  - 1
+  - 16
+- !!python/tuple
+  - 5
+  - 10
+- !!python/tuple
+  - 9
+  - 11
+steps: 50

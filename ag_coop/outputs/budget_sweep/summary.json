@@ -1,0 +1,198 @@
+{
+  "config": {
+    "map": "map_01",
+    "n_agents": 3,
+    "steps": 100,
+    "K": 5,
+    "H": 40,
+    "seed": 42
+  },
+  "budgets": [
+    0,
+    1,
+    2,
+    5,
+    10,
+    50,
+    100,
+    300
+  ],
+  "results": [
+    {
+      "budget_ms": 0,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 0,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 0.001051350227498915,
+        "mapf_p95_plan_time_ms": 0.005013000190956518,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 0,
+        "mapf_expanded_mean_per_call": 0.0,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 1,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 1,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 1.0115565501109813,
+        "mapf_p95_plan_time_ms": 1.0255339984723832,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 2837,
+        "mapf_expanded_mean_per_call": 141.85,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 2,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 2,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 2.016451750023407,
+        "mapf_p95_plan_time_ms": 2.0402359987201635,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 6270,
+        "mapf_expanded_mean_per_call": 313.5,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 5,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 5,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 5.034776200227498,
+        "mapf_p95_plan_time_ms": 5.122136000863975,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 14460,
+        "mapf_expanded_mean_per_call": 723.0,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 10,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 10,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 10.053808299562661,
+        "mapf_p95_plan_time_ms": 10.081944998091785,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 29503,
+        "mapf_expanded_mean_per_call": 1475.15,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 50,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 50,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 0,
+        "mapf_timeout_calls": 20,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 50.08150565045071,
+        "mapf_p95_plan_time_ms": 50.12211100256536,
+        "fallback_wait_steps": 100,
+        "collision_free": true,
+        "expanded_nodes_total": 148306,
+        "mapf_expanded_mean_per_call": 7415.3,
+        "mean_step_motion": 0.0
+      }
+    },
+    {
+      "budget_ms": 100,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 100,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 20,
+        "mapf_timeout_calls": 0,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 90.43573965009273,
+        "mapf_p95_plan_time_ms": 98.49012999984552,
+        "fallback_wait_steps": 0,
+        "collision_free": true,
+        "expanded_nodes_total": 264277,
+        "mapf_expanded_mean_per_call": 13213.85,
+        "mean_step_motion": 0.6262626262626263
+      }
+    },
+    {
+      "budget_ms": 300,
+      "metrics": {
+        "seed": 42,
+        "steps": 100,
+        "K": 5,
+        "H": 40,
+        "budget_ms": 300,
+        "n_agents": 3,
+        "mapf_calls": 20,
+        "mapf_success_calls": 20,
+        "mapf_timeout_calls": 0,
+        "mapf_fail_calls": 0,
+        "mapf_mean_plan_time_ms": 90.28327009982604,
+        "mapf_p95_plan_time_ms": 111.91671899723588,
+        "fallback_wait_steps": 0,
+        "collision_free": true,
+        "expanded_nodes_total": 264277,
+        "mapf_expanded_mean_per_call": 13213.85,
+        "mean_step_motion": 0.6262626262626263
+      }
+    }
+  ]
+}

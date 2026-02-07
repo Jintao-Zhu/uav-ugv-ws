@@ -1,0 +1,19 @@
+{
+  "seed": 200,
+  "steps": 50,
+  "K": 5,
+  "H": 40,
+  "budget_ms": 0,
+  "n_agents": 5,
+  "mapf_calls": 10,
+  "mapf_success_calls": 0,
+  "mapf_timeout_calls": 10,
+  "mapf_fail_calls": 0,
+  "mapf_mean_plan_time_ms": 0.0013247998140286654,
+  "mapf_p95_plan_time_ms": 0.005368001438910142,
+  "fallback_wait_steps": 50,
+  "collision_free": true,
+  "expanded_nodes_total": 0,
+  "mapf_expanded_mean_per_call": 0.0,
+  "mean_step_motion": 0.0
+}

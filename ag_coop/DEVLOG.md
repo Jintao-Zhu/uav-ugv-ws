@@ -1,5 +1,221 @@
 # 开发日志
 
+## 2026-02-07 19:00
+
+### Day6 MAPF 深度验证与关键 Bug 修复 ✅
+
+**背景：**
+- Day6 MAPF 基础功能已完成（Step 0-8）
+- 进行深度验证测试，发现关键 bug
+
+**深度验证测试：**
+
+1. **Test A: 强制 Timeout 验证** ✅
+   - 配置：budget_ms=0, n=5, steps=50
+   - 结果：100% timeout, 100% fallback, 无碰撞
+   - 文件：`scripts/test_mapf_integration.py`（已有）
+   - 输出：`outputs/test_real_timeout/`
+
+2. **Test B: Swap Case 验证** ✅
+   - 场景：2 agents 互换位置
+   - 结果：两种优先级都成功，agents 正确绕路
+   - 文件：`scripts/test_swap_case.py`
+
+3. **Test C: Bottleneck 验证** ✅
+   - 场景：3 agents 通过狭窄通道
+   - 结果：3/3 优先级成功，无碰撞
+   - 文件：`scripts/test_bottleneck.py`
+
+4. **Test D: 统计验证** ✅
+   - 配置：10 seeds × 500 steps
+   - 初始结果：6/10 成功，4/10 失败（碰撞）❌
+   - 文件：`scripts/test_statistical.py`
+
+**关键 Bug 发现：**
+
+**位置：** `agcoop/mapf/astar.py` (lines 156-165)
+
+**问题：**
+- 当 agent 到达目标后，代码直接填充路径到 H+1 长度
+- **未检查未来时刻是否被其他 agent 预留**
+- 导致低优先级 agent 占用高优先级 agent 的预留位置
+
+**触发条件：**
+```python
+# Agent 1（高优先级）规划路径，预留 (18, 16) at t=3
+# Agent 2（低优先级）start == goal == (18, 16)
+# Agent 2 填充路径时占用 t=3 的 (18, 16)
+# 结果：t=3 时两个 agent 都在 (18, 16) → 碰撞！
+```
+
+**影响：**
+- 严重性：Critical
+- 影响范围：所有优先级 MAPF 规划
+- 表现：4/10 seeds 出现 vertex collision
+
+**修复方案：**
+- 不在到达目标时立即返回
+- 继续搜索直到时间窗 H
+- 填充路径时检查每个时刻的预留情况
+- 如果目标位置被占用，agent 会绕路等待
+
+**修复效果：**
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| 成功率 | 60% (6/10) | **100% (10/10)** ✅ |
+| 平均规划时间 | 0.08 ms | 74.35 ms |
+| P95 规划时间 | 0.73 ms | 95.38 ms |
+| 展开节点数 | 9.9 | 11079.2 |
+| 碰撞 | 4 seeds 有碰撞 | **0 碰撞** ✅ |
+
+**说明：** 规划时间增加是因为现在正确地搜索到时间窗 H，但仍在预算内（95.38 ms < 310 ms）
+
+**Budget Sweep 实验：**
+
+创建 `scripts/budget_sweep.py`，测试不同时间预算的影响：
+
+| Budget (ms) | Success Rate | Timeout Rate | Mean Time | Expanded Nodes | Fallback % |
+|-------------|--------------|--------------|-----------|----------------|------------|
+| 0           | 0.0%         | 100.0%       | 0.00 ms   | 0.0            | 100.0%     |
+| 1           | 0.0%         | 100.0%       | 1.01 ms   | 141.8          | 100.0%     |
+| 2           | 0.0%         | 100.0%       | 2.02 ms   | 313.5          | 100.0%     |
+| 5           | 0.0%         | 100.0%       | 5.03 ms   | 723.0          | 100.0%     |
+| 10          | 0.0%         | 100.0%       | 10.05 ms  | 1475.2         | 100.0%     |
+| 50          | 0.0%         | 100.0%       | 50.08 ms  | 7415.3         | 100.0%     |
+| **100**     | **100.0%**   | **0.0%**     | **90.44 ms** | **13213.9**    | **0.0%**   |
+| 300         | 100.0%       | 0.0%         | 90.28 ms  | 13213.9        | 0.0%       |
+
+**关键发现：**
+- 临界点在 50-100 ms 之间
+- 展开节点数与 budget 线性相关
+- budget ≥ 100ms 时性能饱和（完整搜索）
+
+**新增文件：**
+- `scripts/test_swap_case.py` - Swap case 测试
+- `scripts/test_bottleneck.py` - Bottleneck 测试
+- `scripts/test_statistical.py` - 统计验证
+- `scripts/debug_collision.py` - Bug 复现脚本
+- `scripts/budget_sweep.py` - Budget sweep 实验
+- `docs/Bug_SpaceTimeAStar_GoalFilling.md` - Bug 详细报告
+- `docs/Day6_MAPF_DeepValidation_Summary.md` - 完整总结
+
+**最终验收：**
+- ✅ Test A: 强制 timeout（100% timeout, 100% fallback）
+- ✅ Test B: Swap case（2/2 优先级成功）
+- ✅ Test C: Bottleneck（3/3 优先级成功）
+- ✅ Test D: 统计验证（10/10 seeds 成功，100% 成功率）
+- ✅ Budget sweep（8 个 budget 点，论文级别数据）
+
+**核心指标：**
+- 正确性：100% 无碰撞
+- 成功率：100% (10/10 seeds)
+- 性能：P95 = 95.38 ms (< 310 ms 预算)
+- 稳定性：500 步长时间运行稳定
+
+**Day6 MAPF 深度验证完成！系统可投入使用！** 🎉
+
+---
+
+## 2024-02-08 05:30
+
+### Day6 MAPF 审稿人式验收 - 完整数据包 ✅
+
+**目标：** 提供完整的验证数据包，回应审稿人式质疑
+
+**审稿人要求的验证数据包：**
+1. ✅ metrics.json（真正的 timeout 测试）
+2. ✅ trace.jsonl（包含 timeout + fallback）
+3. ✅ init.json（配置信息）
+4. ✅ 运行命令
+5. ✅ 独立 validator 输出
+
+---
+
+**真正的 Timeout 测试：**
+
+**配置：**
+- budget_ms=0（极端小，强制 timeout）
+- n=5（更多 agent）
+- goal_radius=15（更远距离）
+- steps=50, K=5, H=40
+
+**结果：**
+```json
+{
+  "mapf_calls": 10,
+  "mapf_success_calls": 0,
+  "mapf_timeout_calls": 10,        ← 100% timeout
+  "fallback_wait_steps": 50,        ← 100% fallback
+  "collision_free": true,
+  "expanded_nodes_total": 0,
+  "mean_step_motion": 0.0
+}
+```
+
+**Trace 行为：**
+- t=0,5,10,...,45: mapf_called=true, mapf_success=false, fallback=true
+- t=1-4,6-9,...: mapf_called=false, fallback=true, positions 恒定（WAIT）
+- 每 K 步重新尝试规划
+- 所有步无碰撞
+
+**独立 Validator：**
+```
+✓ 碰撞检测通过：无冲突
+验收结果: ok=true
+```
+
+---
+
+**审稿人验收标准逐条检查：**
+
+### A. 超时一定会发生的工况 ✅
+- ✅ mapf_timeout_calls = 10 > 0（100% 超时）
+- ✅ collision_free = true
+- ✅ fallback_wait_steps = 50 > 0（100% fallback）
+
+### B. "缓存路径被执行"的工况 ✅
+- ✅ 决策步：decision_step=true 且 mapf_called=true
+- ✅ 非决策步：decision_step=false 且 mapf_called=false
+- ✅ 正常测试中验证：expanded_nodes=185, mean_step_motion=0.49
+
+### C. swap/edge 冲突的"独立校验" ✅
+- ✅ 独立 validator 通过
+- ✅ 检查了 vertex collision 和 edge swap
+
+---
+
+**两次测试对比：**
+
+| 指标 | 正常运行 | Timeout 测试 |
+|------|---------|-------------|
+| budget_ms | 300 | 0 |
+| n_agents | 3 | 5 |
+| mapf_success_calls | 20 (100%) | 0 (0%) |
+| mapf_timeout_calls | 0 | 10 (100%) |
+| fallback_wait_steps | 0 | 50 (100%) |
+| expanded_nodes_total | 185 | 0 |
+| mean_step_motion | 0.49 | 0.0 |
+| collision_free | true | true |
+
+---
+
+**验证的核心机制：**
+1. ✅ Receding Horizon（每 K 步调用）
+2. ✅ Timeout 机制（budget_ms=0 触发 100% timeout）
+3. ✅ Fallback 机制（WAIT 并重试）
+4. ✅ 碰撞检测（vertex + edge swap）
+5. ✅ 缓存执行（正常测试中验证）
+
+**输出文件：**
+- `outputs/test_real_timeout/metrics.json`
+- `outputs/test_real_timeout/trace.jsonl`
+- `outputs/test_real_timeout/init.json`
+
+**结论：** Day6 核心功能已就绪，审稿人式验收通过！🎉
+
+---
+
 ## 2024-02-08 05:00
 
 ### Day6 MAPF 深度验证 - 回应关键质疑 ✅
@@ -3236,3 +3452,83 @@ python scripts/run_one_episode.py --config configs/default.yaml --seed 123 --out
 **测试：**
 - `test_logging.py` - 验收测试（全部通过）
 - `example_with_logging.py` - 使用示例
+
+---
+        if t >= H:
+            path = self._reconstruct_path(visited, cell, t)
+            return path, False, expanded_nodes
+
+    if t >= H:
+        continue
+
+    # 继续扩展...
+
+# 搜索结束，检查从目标 WAIT 到 H 是否有效
+if best_goal_time is not None:
+    path = self._reconstruct_path(visited, goal, best_goal_time)
+    current_t = best_goal_time
+    while current_t < H:
+        if not self.reservation_table.is_move_valid(goal, goal, current_t, agent_id):
+            return None, False, expanded_nodes  # 目标被占用
+        path.append(goal)
+        current_t += 1
+    return path, False, expanded_nodes
+```
+
+**修复效果：**
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| 成功率 | 60% (6/10) | **100% (10/10)** ✅ |
+| 平均规划时间 | 0.08 ms | 74.35 ms |
+| P95 规划时间 | 0.73 ms | 95.38 ms |
+| 展开节点数 | 9.9 | 11079.2 |
+| 碰撞 | 4 seeds 有碰撞 | **0 碰撞** ✅ |
+
+**说明：** 规划时间增加是因为现在正确地搜索到时间窗 H，但仍在预算内（95.38 ms < 310 ms）
+
+**Budget Sweep 实验：**
+
+创建 `scripts/budget_sweep.py`，测试不同时间预算的影响：
+
+| Budget (ms) | Success Rate | Timeout Rate | Mean Time | Expanded Nodes | Fallback % |
+|-------------|--------------|--------------|-----------|----------------|------------|
+| 0           | 0.0%         | 100.0%       | 0.00 ms   | 0.0            | 100.0%     |
+| 1           | 0.0%         | 100.0%       | 1.01 ms   | 141.8          | 100.0%     |
+| 2           | 0.0%         | 100.0%       | 2.02 ms   | 313.5          | 100.0%     |
+| 5           | 0.0%         | 100.0%       | 5.03 ms   | 723.0          | 100.0%     |
+| 10          | 0.0%         | 100.0%       | 10.05 ms  | 1475.2         | 100.0%     |
+| 50          | 0.0%         | 100.0%       | 50.08 ms  | 7415.3         | 100.0%     |
+| **100**     | **100.0%**   | **0.0%**     | **90.44 ms** | **13213.9**    | **0.0%**   |
+| 300         | 100.0%       | 0.0%         | 90.28 ms  | 13213.9        | 0.0%       |
+
+**关键发现：**
+- 临界点在 50-100 ms 之间
+- 展开节点数与 budget 线性相关
+- budget ≥ 100ms 时性能饱和（完整搜索）
+
+**新增文件：**
+- `scripts/test_swap_case.py` - Swap case 测试
+- `scripts/test_bottleneck.py` - Bottleneck 测试
+- `scripts/test_statistical.py` - 统计验证
+- `scripts/debug_collision.py` - Bug 复现脚本
+- `scripts/budget_sweep.py` - Budget sweep 实验
+- `docs/Bug_SpaceTimeAStar_GoalFilling.md` - Bug 详细报告
+- `docs/Day6_MAPF_DeepValidation_Summary.md` - 完整总结
+
+**最终验收：**
+- ✅ Test A: 强制 timeout（100% timeout, 100% fallback）
+- ✅ Test B: Swap case（2/2 优先级成功）
+- ✅ Test C: Bottleneck（3/3 优先级成功）
+- ✅ Test D: 统计验证（10/10 seeds 成功，100% 成功率）
+- ✅ Budget sweep（8 个 budget 点，论文级别数据）
+
+**核心指标：**
+- 正确性：100% 无碰撞
+- 成功率：100% (10/10 seeds)
+- 性能：P95 = 95.38 ms (< 310 ms 预算)
+- 稳定性：500 步长时间运行稳定
+
+**Day6 MAPF 深度验证完成！系统可投入使用！** 🎉
+
+---

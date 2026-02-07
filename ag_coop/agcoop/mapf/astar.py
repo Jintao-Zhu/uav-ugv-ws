@@ -138,6 +138,10 @@ class SpaceTimeAStar:
         visited = {}
         visited[(start, 0)] = (None, None, 0)
 
+        # 记录到达目标的最早时刻和最佳路径
+        best_goal_time = None
+        best_goal_cost = None
+
         while open_list:
             # 检查超时
             if perf_counter() > time_deadline:
@@ -155,14 +159,15 @@ class SpaceTimeAStar:
 
             # 检查是否到达目标
             if cell == goal:
-                # 重建路径
-                path = self._reconstruct_path(visited, cell, t)
+                # 记录到达目标的时刻
+                if best_goal_time is None or g < best_goal_cost:
+                    best_goal_time = t
+                    best_goal_cost = g
 
-                # 如果路径长度小于 H+1，在目标位置 stay
-                while len(path) <= H:
-                    path.append(goal)
-
-                return path, False, expanded_nodes
+                # 如果已经到达时间窗 H，返回路径
+                if t >= H:
+                    path = self._reconstruct_path(visited, cell, t)
+                    return path, False, expanded_nodes
 
             # 检查时间窗
             if t >= H:
@@ -191,6 +196,25 @@ class SpaceTimeAStar:
                         next_h = self.heuristic(neighbor, goal)
                         next_f = next_g + next_h
                         heapq.heappush(open_list, (next_f, next_g, t + 1, neighbor, (cell, t)))
+
+        # 搜索结束，检查是否找到了目标
+        if best_goal_time is not None:
+            # 找到了目标，但没有到达 t=H
+            # 重建到达目标的路径，然后在目标位置 WAIT 直到 H
+            path = self._reconstruct_path(visited, goal, best_goal_time)
+
+            # 从 best_goal_time 继续在目标位置 WAIT 直到 H
+            # 需要检查每个 WAIT 步是否有效（是否被其他 agent 预留）
+            current_t = best_goal_time
+            while current_t < H:
+                # 检查下一个时刻目标位置是否空闲
+                if not self.reservation_table.is_move_valid(goal, goal, current_t, agent_id):
+                    # 目标位置被占用，无法继续 WAIT
+                    return None, False, expanded_nodes
+                path.append(goal)
+                current_t += 1
+
+            return path, False, expanded_nodes
 
         # 未找到路径
         return None, False, expanded_nodes
