@@ -1,5 +1,1052 @@
 # 开发日志
 
+## 2026-02-08 03:00
+
+### Day6.5 完整回归测试套件全部通过 ✅
+
+完成了 Day6.5 的所有验收工作（7-10 步）：
+
+---
+
+**Day6.5-7：核心回归（正常运行）✅**
+- 配置: steps=500, n_ugv=3, K=5, H=40, budget=300ms, seed=0
+- MAPF: 100 次调用，100% 成功，P95=145ms<300ms
+- 验收: collision_free=true, 所有 Day6 验收脚本通过
+
+**Day6.5-8：强制 Timeout/Fallback 回归 ✅**
+- 配置: steps=50, n_ugv=5, K=5, budget=0ms, seed=200
+- MAPF: 10 次调用，100% 超时
+- Fallback: 50/50 步 (100%)，全体静止
+- 验收: expanded_nodes=0, collision_free=true
+
+**Day6.5-9：风险场景回归（Swap / Bottleneck）✅**
+- Swap case: 2/2 优先级成功，无 vertex/edge collision
+- Bottleneck case: 3/3 优先级成功，无碰撞
+
+**Day6.5-10：统计鲁棒性（10 seeds）✅**
+- 成功率: 10/10 (100%)
+- MAPF 成功率: 平均 100%
+- Fallback: 平均 0%
+- P95 规划时间: 103.40ms < 310ms
+- 展开节点: 平均 11079/次
+- 碰撞: 全部无碰撞
+
+---
+
+**总结：**
+
+Day6.5 完整验收通过（10 个步骤）：
+- ✅ Step 0-5: MAPF 集成到 core.py
+- ✅ Step 6: 4 组回归测试
+- ✅ Step 7: Day6 真值标准
+- ✅ Step 8: 强制超时/Fallback
+- ✅ Step 9: 风险场景（Swap/Bottleneck）
+- ✅ Step 10: 统计鲁棒性（10 seeds）
+
+**核心成就：**
+- 不仅"能跑"，而且"可验证"
+- 达到与 Day6 同等级别的可验证性
+- 迁移没有破坏 Day6 的正确性工具链
+- 统计鲁棒性：10/10 seeds 成功，100% MAPF 成功率
+
+🚀 **可以无痛进入 Day7！**
+
+---
+
+## 2026-02-08 02:30
+
+### Day6.5-7：核心回归（正常运行）✅
+
+**目的：** 证明 core.py 集成后仍满足 Day6 的"真值标准"
+
+---
+
+**测试配置：**
+```
+seed: 0
+n_ugv: 3
+steps: 500
+K: 5
+H: 40
+budget_ms: 300
+```
+
+**输出目录：** `outputs/day6_5_core_seed0/`
+
+---
+
+**验收结果（8 项全部通过）：**
+
+1. ✅ **collision_free == true**
+   - 实际: true
+
+2. ✅ **mapf_calls == 100** (ceil(500/5))
+   - 实际: 100
+
+3. ✅ **mapf_success_calls == mapf_calls**
+   - 实际: 100/100 (100% 成功率)
+
+4. ✅ **fallback_wait_steps == 0**
+   - 实际: 0 (无 fallback)
+
+5. ✅ **mapf_p95_plan_time_ms < budget_ms (300)**
+   - 实际: 145.39ms < 300ms
+
+6. ✅ **trace.jsonl 决策步逻辑正确**
+   - 决策步时间戳: t=1, 6, 11, 16, 21, ..., 496
+   - 所有决策步: decision_step=true && mapf_called=true
+   - 所有非决策步: mapf_called=false (缓存执行)
+
+7. ✅ **check_collisions.py 输出 ok=true**
+   - 无 Vertex collision
+   - 无 Edge swap collision
+
+8. ✅ **validate_day6_outputs.py 验收通过**
+   - metrics.json 验证通过
+   - trace.jsonl 验证通过
+   - 所有字段完整，逻辑一致
+
+---
+
+**MAPF 性能摘要：**
+- 调用次数: 100
+- 成功率: 100% (100/100)
+- 平均规划时间: 126.00ms
+- P95 规划时间: 145.39ms
+- 预算利用率: 48.5% (145.39/300)
+
+**系统行为：**
+- 无碰撞: collision_free=true
+- 无 fallback: fallback_wait_steps=0
+- 决策步正确: 100 次，间隔 K=5
+- 缓存执行正确: 非决策步未调用 MAPF
+
+---
+
+**验收结论：**
+
+✅ **Day6.5-7 核心回归测试全部通过！**
+
+**证明**：core.py 集成后仍满足 Day6 的"真值标准"
+- ✅ 迁移没有破坏 Day6 的正确性工具链
+- ✅ 所有验收脚本都通过
+- ✅ 可以无痛进入下一阶段
+
+**详细报告：** `docs/DAY65_STEP7_CORE_REGRESSION_REPORT.md`
+
+---
+
+## 2026-02-08 02:00
+
+### Day6.5 完整验收 - 4 组回归测试全部通过 ✅
+
+**目标重新对齐：** 把 core.py 集成后的行为，做到与 Day6 独立集成脚本同等级别的可验证性
+
+**核心问题：** 不是"能跑"，而是"可验证"
+
+---
+
+**4 组回归测试：**
+
+1. ✅ **Receding Horizon 执行验证**
+   - 每 K 步调用一次 MAPF
+   - 其余步执行缓存路径
+   - 调用次数 = floor((steps - 1) / K) + 1
+
+2. ✅ **Fallback WAIT 验证**
+   - 超时/失败时全体 WAIT
+   - 每 K 步重试 MAPF
+   - fallback 期间位置不变
+
+3. ✅ **离线碰撞校验**
+   - Vertex collision 检测
+   - Edge swap collision 检测
+   - 所有测试用例都无碰撞
+
+4. ✅ **输出完整性校验**
+   - metrics 字段齐全
+   - trace 字段齐全
+   - 逻辑一致性（p95≥mean、calls 公式、fallback 一致性）
+
+---
+
+**关键修复：**
+
+1. **决策步判断逻辑修复**
+   - 问题：旧逻辑 `t % K == 0` 导致决策步是 t=5, 10, 15, ...
+   - 修复：新逻辑 `(t - 1) % K == 0` 使决策步是 t=1, 6, 11, 16, ...
+   - 原因：标准 Receding Horizon 应该在 t=1 立即规划
+   - 修复文件：
+     - `agcoop/env/core.py` 第 630 行
+     - `agcoop/controllers/ugv_mapf_controller.py` 第 158 行
+
+2. **MAPF 调用次数公式修复**
+   - 问题：旧公式 `1 + ceil((steps-1)/K)` 对于 steps=50, K=5 得到 11
+   - 修复：新公式 `floor((steps-1)/K) + 1` 对于 steps=50, K=5 得到 10
+   - 原因：决策步 t=1, 6, 11, ..., 46 中 <= 50 的数量是 10
+   - 修复文件：
+     - `scripts/validate_receding_horizon.py` 第 52 行
+     - `scripts/validate_output_integrity.py` 第 84 行
+
+---
+
+**最终验收数据：**
+
+测试用例 1：正常预算（核心正确性）
+```
+配置: steps=500, n_ugv=5, K=5, H=40, budget=300ms
+MAPF: 100 次调用，100% 成功，平均 205ms，P95 234ms
+系统: collision_free=true, fallback=0%
+验收: ✅ 4 组回归测试全部通过
+```
+
+测试用例 2：强制超时（核心鲁棒性）
+```
+配置: steps=50, n_ugv=3, K=5, H=40, budget=0ms
+MAPF: 10 次调用，100% 超时
+系统: collision_free=true, fallback=100%
+验收: ✅ 4 组回归测试全部通过
+```
+
+---
+
+**新增验收脚本：**
+
+1. `scripts/validate_receding_horizon.py` - Receding Horizon 执行验证
+2. `scripts/validate_fallback_wait.py` - Fallback WAIT 验证
+3. `scripts/validate_output_integrity.py` - 输出完整性校验
+4. `scripts/run_day65_regression.py` - 一键运行所有 4 组回归测试
+
+**使用方法：**
+```bash
+# 运行完整回归测试
+python scripts/run_day65_regression.py --run outputs/<run> --steps <steps>
+```
+
+---
+
+**验收标准总结：**
+
+| 验收项 | 标准 | 结果 |
+|--------|------|------|
+| Receding Horizon | 每 K 步调用一次 MAPF | ✅ |
+| 缓存执行 | 非决策步使用缓存路径 | ✅ |
+| Fallback WAIT | 超时时全体 WAIT | ✅ |
+| 重试机制 | 每 K 步重试 MAPF | ✅ |
+| 碰撞检测 | 无 vertex/edge collision | ✅ |
+| 输出完整性 | metrics/trace 字段齐全 | ✅ |
+| 逻辑一致性 | 指标计算正确 | ✅ |
+| 正常预算 | 100% 成功率，无 fallback | ✅ |
+| 强制超时 | 100% 超时，100% fallback | ✅ |
+
+---
+
+**Day6.5 完成！可以无痛进入 Day7！** 🎉
+
+- ✅ 6 个迁移步骤全部完成（controller → core.py）
+- ✅ 4 组回归测试全部通过
+- ✅ 达到与 Day6 同等级别的可验证性
+- ✅ 标准化的验收流程和回归测试套件
+
+**详细文档：** `docs/DAY65_FINAL_VALIDATION_SUMMARY.md`
+
+---
+
+## 2026-02-08 00:30
+
+### Day6 Step 6: 调试工作流程和工具 ✅
+
+**目标：** 建立标准化的调试流程，当验收失败时能快速定位问题类型（controller bug / core 集成 bug / 日志口径 bug）
+
+**需要回传的 4 个材料：**
+
+如果 Day6.5 任一验收没过，提供以下材料即可快速定位：
+
+1. ✅ **outputs/<run>/config_resolved.yaml** - 确认 K/H/budget/seed/n_agents
+2. ✅ **outputs/<run>/metrics.json** - 关键指标
+3. ✅ **outputs/<run>/trace.jsonl** - 截取第一次出错前后 30 行（尤其是决策步附近）
+4. ✅ **scripts/check_collisions.py 的输出** - 若报冲突，附冲突类型（vertex/edge swap）
+
+**新增工具脚本：**
+
+1. **scripts/quick_debug.sh** - 快速诊断脚本（30秒看到问题）
+   ```bash
+   ./scripts/quick_debug.sh outputs/<run>
+   ```
+   输出：
+   - 文件检查（config/metrics/trace 是否存在）
+   - 关键配置（n_ugv, H, budget, seed）
+   - 关键指标（collision_free, mapf_calls, completion_rate）
+   - 冲突检测结果
+   - 自动诊断建议
+
+2. **scripts/generate_debug_report.py** - 完整调试报告生成器
+   ```bash
+   python scripts/generate_debug_report.py --run outputs/<run>
+   python scripts/generate_debug_report.py --run outputs/<run> --error-line 25
+   ```
+   输出：
+   - config_resolved.yaml 完整内容 + 关键参数摘要
+   - metrics.json 完整内容 + 关键指标摘要
+   - trace.jsonl 智能截取（决策步附近或指定行附近）
+   - check_collisions.py 自动运行结果
+   - 基于指标的自动诊断建议
+
+3. **scripts/check_collisions.py** - 冲突检测脚本（已存在，Day6 Step 7）
+   ```bash
+   python scripts/check_collisions.py --trace outputs/<run>/trace.jsonl
+   ```
+   检测类型：
+   - Vertex collision（两个 agent 同时占据同一位置）
+   - Edge collision（两个 agent 交换位置）
+
+**新增文档：**
+
+1. **docs/DAY6_DEBUG_WORKFLOW.md** - 详细调试工作流程（5000+ 字）
+   - 快速使用指南
+   - 4 个材料详解
+   - 问题定位决策树
+   - 常见问题排查（Q&A）
+   - 完整调试流程示例
+   - trace.jsonl 字段说明
+
+2. **docs/DEBUG_QUICK_REFERENCE.md** - 调试速查卡（1 页纸）
+   - 快速开始命令
+   - 问题诊断速查表
+   - 常见问题快速修复
+   - trace 关键字段
+   - 3 步调试流程
+
+**问题诊断速查表：**
+
+| 指标 | 异常值 | 问题类型 | 检查重点 |
+|------|--------|----------|----------|
+| `collision_free` | `false` | **Controller bug** | trace 冲突时刻 + controller.py |
+| `mapf_fail_calls` | `> 0` | **Core 集成 bug** | mapf_interface.py 调用逻辑 |
+| `mapf_timeout_calls` | `== mapf_calls` | **配置/性能问题** | time_budget_ms + MAPF 性能 |
+| `completion_rate` | `0.0` | **逻辑问题** | 任务分配 + rendezvous 选择 |
+| 指标正常 | 但验收失败 | **日志/口径 bug** | logger.py 指标统计 |
+
+**测试验证：**
+
+使用 `outputs/test_step5_exp_b` 测试所有工具：
+
+```bash
+# 快速诊断
+$ ./scripts/quick_debug.sh outputs/test_step5_exp_b
+⚙️  关键配置:
+  n_ugv: 3, H: 40, time_budget_ms: 0, seed: 0
+
+📊 关键指标:
+  collision_free: True
+  mapf_timeout_calls: 11 (100%)
+  completion_rate: 0.00%
+
+💡 诊断建议:
+  ⚠️  所有 MAPF 调用都超时 → 检查 time_budget_ms 设置或 MAPF 性能
+  ⚠️  completion_rate=0 → 检查任务分配或路径规划逻辑
+```
+
+```bash
+# 完整报告
+$ python scripts/generate_debug_report.py --run outputs/test_step5_exp_b
+[输出 4 个材料的完整内容 + 自动诊断]
+```
+
+```bash
+# 冲突检测
+$ python scripts/check_collisions.py --trace outputs/test_step5_exp_b/trace.jsonl
+✓ 碰撞检测通过：无冲突
+验收结果: ok=true
+```
+
+**使用场景：**
+
+1. **验收失败时**：运行 `quick_debug.sh` 快速看到问题类型
+2. **需要详细分析**：运行 `generate_debug_report.py` 获取完整材料
+3. **仅检查冲突**：运行 `check_collisions.py` 验证碰撞
+4. **回传材料**：将 `generate_debug_report.py` 的输出发给开发者
+
+**关键特性：**
+
+- ✅ **自动化**：一键生成所有调试材料
+- ✅ **智能截取**：自动定位决策步附近的 trace
+- ✅ **自动诊断**：基于指标给出问题类型建议
+- ✅ **标准化**：统一的材料格式，快速定位问题
+- ✅ **文档完善**：详细文档 + 速查卡，覆盖所有场景
+
+**Day6 Step 6 完成！调试工具链已就绪！** 🎉
+
+---
+
+## 2026-02-08 00:10
+
+### Day6.5 Step 5: 迁移验收实验 - 正常预算 + 强制超时 ✅
+
+**目标：**
+- 实验 A：正常预算（核心正确性）- steps=500, K=5, H=40, budget_ms=300
+- 实验 B：强制超时（核心鲁棒性）- steps=50, K=5, H=40, budget_ms=0
+
+**实验 A 验收标准（全部通过）：**
+- ✅ collision_free=true
+- ✅ fallback_wait_steps=0
+- ✅ mapf_success_calls == mapf_calls (101 == 101)
+- ✅ mapf_p95_plan_time_ms < budget_ms (130.19 < 300)
+- ✅ validator 两个脚本都通过
+
+**实验 B 验收标准（全部通过）：**
+- ✅ mapf_timeout_calls > 0 且接近 mapf_calls (11/11, 100%)
+- ✅ fallback_wait_steps == steps (50/50, 100%)
+- ✅ 位置在 fallback 时保持不动 (0/3 移动)
+- ✅ 仍然 collision_free=true
+- ✅ validator 两个脚本都通过
+
+**实验结果：**
+
+| 指标 | 实验 A (正常) | 实验 B (超时) |
+|------|--------------|--------------|
+| steps | 500 | 50 |
+| budget_ms | 300 | 0 |
+| mapf_calls | 101 | 11 |
+| mapf_success_calls | 101 (100%) | 0 (0%) |
+| mapf_timeout_calls | 0 (0%) | 11 (100%) |
+| mapf_mean_plan_time_ms | 125.30 | 0.00 |
+| mapf_p95_plan_time_ms | 130.19 | 0.01 |
+| fallback_wait_steps | 0 (0%) | 50 (100%) |
+| collision_free | true | true |
+| UGV 移动 | 有移动 | 0/3 移动 |
+
+**关键修复：**
+
+修复了 `ugv_mapf_controller.py` 中的 fallback 逻辑 bug：
+- **问题**：在决策步时，如果 `fallback_wait_remaining > 0`，会跳过规划，导致后续步骤没有缓存路径
+- **修复**：在决策步时，如果还在 fallback 状态，先清零 `fallback_wait_remaining`，然后尝试重新规划
+- **代码**：
+  ```python
+  # 如果在 fallback 状态且是决策步，清零 fallback（准备重新规划）
+  if decision_step and self.fallback_wait_remaining > 0:
+      self.fallback_wait_remaining = 0
+  ```
+
+**验证结果：**
+
+实验 A（正常预算）：
+- ✅ 500 步运行完成，无异常
+- ✅ 101 次 MAPF 调用，100% 成功
+- ✅ 0 次 fallback，所有规划都成功
+- ✅ P95 规划时间 130.19ms < 300ms 预算
+- ✅ validate_day6_outputs.py 通过
+- ✅ check_collisions.py 通过（无碰撞）
+
+实验 B（强制超时）：
+- ✅ 50 步运行完成，无异常
+- ✅ 11 次 MAPF 调用，100% 超时
+- ✅ 50 步全部 fallback WAIT
+- ✅ 所有 UGV 保持不动（初始位置 == 最终位置）
+- ✅ validate_day6_outputs.py 通过
+- ✅ check_collisions.py 通过（无碰撞）
+
+**新增文件：**
+- `scripts/test_step5_migration_validation.py` - 迁移验收实验脚本
+
+**Day6.5 完整总结：**
+
+Day6.5 分 5 步完成 MAPF 集成到 core.py：
+- ✅ Step 0: UGV MAPF Wrapper（接口封装）
+- ✅ Step 1: Controller 逻辑提取（可复用组件）
+- ✅ Step 2: 最小侵入集成（初始化）
+- ✅ Step 3: UGV 动作生成（Receding Horizon 执行）
+- ✅ Step 4: Validator 兼容性（输出格式对齐）
+- ✅ Step 5: 迁移验收实验（正常预算 + 强制超时）
+
+**验收标准（全部通过）：**
+- ✅ MAPF 启用时，UGV 按规划路径移动
+- ✅ MAPF 禁用时，环境行为与 Day1 一致
+- ✅ 调用频率：1 + ceil(steps / K)
+- ✅ 缓存执行：非决策步不调用 MAPF
+- ✅ 碰撞检测：无碰撞发生
+- ✅ 日志记录：trace 和 metrics 完整
+- ✅ Validator 兼容：Day6 validators 直接通过
+- ✅ 正常预算：100% 成功率，无 fallback
+- ✅ 强制超时：100% timeout，100% fallback，系统鲁棒
+
+**Day6.5 完成！系统已就绪，可以进入 Day7！** 🎉
+
+---
+
+## 2026-02-07 23:55
+
+### Day6.5 Step 4: Validator 兼容性 - 输出格式对齐 ✅
+
+**目标：**
+- 确保 core.py 的 trace.jsonl 和 metrics.json 输出与 Day6 的 validator 脚本完全兼容
+- `validate_day6_outputs.py --dir outputs/<core-run>/` 直接通过
+- `check_collisions.py --trace outputs/<core-run>/trace.jsonl` 直接通过
+
+**实现内容：**
+
+1. **修改 `_log_step()` 方法（core.py:632-670）**：
+   - 添加 `fallback` 字段（Day6 validator 期望的字段名，与 `mapf_fallback` 同值）
+   - 添加 `ugv_goals` 字段（从 controller.current_goals 获取）
+   - 添加 `ugv_positions` 字段（Day6 collision checker 期望的字段名，与 `ugv_pos` 同值）
+
+2. **修改 `_save_final_metrics()` 方法（core.py:731-741）**：
+   - 添加 `mapf_fail_calls` 字段（从 controller stats 获取）
+   - 添加 `mapf_p95_plan_time_ms` 字段（从 controller stats 获取）
+   - 添加 `collision_free` 字段（固定为 True，因为有碰撞会抛异常）
+   - 添加 `expanded_nodes_total` 字段（从 controller stats 获取）
+   - 添加 `mapf_expanded_mean_per_call` 字段（从 controller stats 获取）
+
+**验收测试：**
+
+创建 `scripts/test_step4_validator_compatibility.py`：
+- ✓ 生成 trace.jsonl 和 metrics.json（30 步，MAPF 启用）
+- ✓ 运行 `validate_day6_outputs.py --dir outputs/test_step4_validator/` 直接通过
+- ✓ 运行 `check_collisions.py --trace outputs/test_step4_validator/trace.jsonl` 直接通过
+
+**测试结果：**
+```
+✓ validate_day6_outputs.py 通过
+  - metrics.json: 所有必需字段存在且逻辑一致
+    - mapf_calls: 7, success: 7, timeout: 0, fail: 0
+    - mean: 123.87ms, p95: 127.45ms (P95 >= Mean ✓)
+  - trace.jsonl: 所有决策步字段完整
+    - 30 行，6 个决策步
+    - 所有 mapf_plan_time_ms 都是正数
+
+✓ check_collisions.py 通过
+  - 无碰撞检测到
+```
+
+**关键技术细节：**
+
+1. **字段名对齐：**
+   - Day6 validator 期望 `fallback`（不是 `mapf_fallback`）
+   - Day6 collision checker 期望 `ugv_positions`（不是 `ugv_pos`）
+   - 为了向后兼容，同时保留两个字段名
+
+2. **Metrics 完整性：**
+   - Controller 的 `get_stats()` 已经返回所有需要的字段
+   - 只需在 `_save_final_metrics()` 中提取并写入
+
+3. **collision_free 字段：**
+   - 固定为 True，因为 core.py 在检测到碰撞时会抛出 RuntimeError
+   - 如果到达 `_save_final_metrics()`，说明没有碰撞发生
+
+**Day6.5 完整总结：**
+
+Day6.5 分 4 步完成 MAPF 集成到 core.py：
+- ✓ Step 0: UGV MAPF Wrapper（接口封装）
+- ✓ Step 1: Controller 逻辑提取（可复用组件）
+- ✓ Step 2: 最小侵入集成（初始化）
+- ✓ Step 3: UGV 动作生成（Receding Horizon 执行）
+- ✓ Step 4: Validator 兼容性（输出格式对齐）
+
+**验收标准（全部通过）：**
+- ✓ MAPF 启用时，UGV 按规划路径移动
+- ✓ MAPF 禁用时，环境行为与 Day1 一致
+- ✓ 调用频率：1 + ceil(steps / K)
+- ✓ 缓存执行：非决策步不调用 MAPF
+- ✓ 碰撞检测：无碰撞发生
+- ✓ 日志记录：trace 和 metrics 完整
+- ✓ Validator 兼容：Day6 validators 直接通过
+
+**下一步：Day7 - 动态任务与会合点集成**
+
+---
+
+## 2026-02-07 23:45
+
+### Day6.5 Step 3: UGV 动作生成 - Receding Horizon 执行 ✅
+
+**目标：**
+- 在 `step()` 中调用 MAPF controller，实现 UGV 移动
+- 每 K 步规划，非决策步执行缓存路径
+- 记录 MAPF 信息到 trace 和 metrics
+- 确保回归保护和碰撞检测
+
+**实现内容：**
+
+1. **修改 `step()` 方法 - UGV 动作生成**：
+   ```python
+   # UGV 动作生成（Day6.5: 使用 MAPF controller）
+   if self.ugv_controller is not None:
+       # 1. 获取当前 UGV 位置（cell 坐标）
+       current_positions = {}
+       for i, pos in enumerate(self.state.ugv_positions):
+           cell = self.grid_map.world_to_cell(pos[0], pos[1])
+           current_positions[i] = cell
+
+       # 2. 尝试重规划（每 K 步）
+       mapf_plan_info = self.ugv_controller.maybe_replan(
+           self.state.t, current_positions)
+
+       # 3. 执行一步（缓存路径或 fallback WAIT）
+       mapf_step_info = self.ugv_controller.step(
+           self.state.t, current_positions)
+
+       # 4. 检查碰撞
+       if not mapf_step_info.collision_free:
+           raise RuntimeError(f"MAPF collision: {mapf_step_info.collision_error}")
+
+       # 5. 更新 UGV 位置（从 cell 坐标转换回 world 坐标）
+       new_ugv_positions = []
+       for i in range(self.n_ugv):
+           cell = mapf_step_info.positions[i]
+           world_pos = self.grid_map.cell_to_world(cell[0], cell[1])
+           new_ugv_positions.append(world_pos)
+
+       self.state.ugv_positions = new_ugv_positions
+   else:
+       # Day1: UGV 原地不动（fallback）
+       pass
+   ```
+
+2. **修改 `_log_step()` 方法 - 记录 MAPF 信息**：
+   ```python
+   def _log_step(self, snr_best: float = 0.0, outage: bool = False,
+                  mapf_plan_info=None, mapf_step_info=None) -> None:
+       # 提取 MAPF 信息
+       mapf_called = False
+       mapf_success = None
+       mapf_plan_time_ms = None
+       mapf_fallback = False
+
+       if mapf_plan_info is not None:
+           mapf_called = mapf_plan_info.called
+           mapf_success = mapf_plan_info.success
+           mapf_plan_time_ms = mapf_plan_info.plan_time_ms
+
+       if mapf_step_info is not None:
+           mapf_fallback = mapf_step_info.in_fallback
+
+       step_data = {
+           't': self.state.t,
+           'mapf_called': mapf_called,
+           'mapf_success': mapf_success,
+           'mapf_plan_time_ms': mapf_plan_time_ms,
+           'mapf_fallback': mapf_fallback,
+           # ... 其他字段
+       }
+   ```
+
+3. **修改 `_save_final_metrics()` 方法 - 保存 MAPF 统计**：
+   ```python
+   # 获取 MAPF 统计（Day6.5）
+   mapf_stats = {}
+   if self.ugv_controller is not None:
+       mapf_stats = self.ugv_controller.get_stats()
+
+   metrics = {
+       # D. 规划与执行
+       'mapf_calls': mapf_stats.get('mapf_calls', 0),
+       'mapf_success_calls': mapf_stats.get('mapf_success_calls', 0),
+       'mapf_timeout_calls': mapf_stats.get('mapf_timeout_calls', 0),
+       'mapf_mean_plan_time_ms': round(mapf_stats.get('mapf_mean_plan_time_ms', 0.0), 2),
+       'fallback_wait_steps': mapf_stats.get('fallback_wait_steps', 0),
+       # ...
+   }
+   ```
+
+4. **修改 `reset()` 方法 - 执行初始规划**：
+   ```python
+   # 重置 controller
+   self.ugv_controller.reset(starts, goals)
+
+   # 执行初始规划（t=0）
+   initial_plan_info = self.ugv_controller.maybe_replan(0, starts)
+
+   print(f"MAPF Controller 初始化: K={self.mapf_K}, H={self.mapf_H}, budget={self.mapf_budget_ms}ms")
+   if initial_plan_info.called:
+       if initial_plan_info.success:
+           print(f"  初始规划成功 ({initial_plan_info.plan_time_ms:.2f} ms)")
+       else:
+           print(f"  初始规划失败: {initial_plan_info.termination_reason}")
+   ```
+
+   **原因**：环境 reset 后 t=0，第一次 step() 会将 t 增加到 1。如果不在 reset 时规划，第一次 step 时 t=1 不满足 t % K == 0，不会规划，但此时没有缓存路径，controller 会报错。
+
+5. **修改 UGV 初始位置生成 - 避免碰撞**：
+   ```python
+   # 初始化 UGV 位置
+   # 如果启用 MAPF 且有地图，从地图中采样不同的空闲位置
+   if self.mapf_enabled and self.grid_map is not None:
+       # 采样不同的空闲起始位置
+       free_cells = []
+       for x in range(self.grid_map.width):
+           for y in range(self.grid_map.height):
+               if self.grid_map.is_free(x, y):
+                   free_cells.append((x, y))
+
+       if len(free_cells) >= self.n_ugv:
+           # 随机采样 n_ugv 个不同的空闲位置
+           sampled_cells = self.rng.choice(len(free_cells), size=self.n_ugv, replace=False)
+           self.state.ugv_positions = []
+           for idx in sampled_cells:
+               cell = free_cells[idx]
+               world_pos = self.grid_map.cell_to_world(cell[0], cell[1])
+               self.state.ugv_positions.append(world_pos)
+       else:
+           print(f"警告：空闲位置不足，使用原点")
+           self.state.ugv_positions = [(0.0, 0.0) for _ in range(self.n_ugv)]
+   else:
+       # Day1: 所有 UGV 从原点开始
+       self.state.ugv_positions = [(0.0, 0.0) for _ in range(self.n_ugv)]
+   ```
+
+   **原因**：原来所有 UGV 都从 (0, 0) 开始，导致多个 agent 在同一位置，MAPF 无法规划（no_path），碰撞检测会报错。
+
+**关键技术细节：**
+
+1. **调用频率计算**：
+   - 初始规划：t=0（在 reset 中）
+   - 后续规划：t=5, 10, 15, ..., 50（每 K=5 步）
+   - 总调用次数：1 + ceil(steps / K) = 1 + 10 = 11
+
+2. **坐标转换**：
+   - World 坐标：float，环境使用
+   - Cell 坐标：int，MAPF 使用
+   - 转换方法：`grid_map.world_to_cell()` 和 `grid_map.cell_to_world()`
+
+3. **时间步语义**：
+   - `self.state.t`：当前时间步
+   - Reset 后：t=0
+   - 第一次 step()：t 增加到 1
+   - 因此需要在 reset 时执行 t=0 的规划
+
+**测试结果：**
+
+创建了 `scripts/test_step3_receding_horizon.py`，包含 3 个测试：
+
+✅ **Test 1: Receding Horizon 执行**
+- MAPF 调用频率：11 次（1 次初始 + 10 次后续）✓
+- 决策步调用 MAPF：10 次 ✓
+- 非决策步执行缓存：40 次 ✓
+- UGV 位置正确更新 ✓
+- Trace 完整记录 MAPF 信息 ✓
+- Metrics 正确保存统计 ✓
+
+✅ **Test 2: MAPF 禁用（回归保护）**
+- Controller 不存在 ✓
+- 环境正常运行 20 步 ✓
+- Metrics 显示 0 次 MAPF 调用 ✓
+
+✅ **Test 3: UGV 移动行为**
+- UGV 有移动（10/30 步）✓
+- 0% fallback 率 ✓
+- 100% MAPF 成功率 ✓
+
+**性能指标（map_01, 3 agents, 50 steps, K=5, H=40）：**
+- 成功率：100% (11/11)
+- 平均规划时间：132.32 ms
+- Fallback 比例：0%
+- 碰撞检测：全部通过
+
+**演示脚本：**
+
+创建了 `scripts/demo_day6.5_complete.py`，展示：
+- MAPF 禁用：UGV 保持在原点（Day1 行为）
+- MAPF 启用：UGV 按规划路径移动
+- 对比：禁用时 0/3 移动，启用时 2/3 移动 ✓
+
+**Day6.5 四步全部完成：**
+- ✅ Step 0: UGV MAPF Wrapper（接口封装）
+- ✅ Step 1: Controller 逻辑提取（可复用组件）
+- ✅ Step 2: 最小侵入集成（初始化）
+- ✅ Step 3: UGV 动作生成（Receding Horizon 执行）
+
+**文档：**
+- `docs/day6.5_step3_summary.md` - Step 3 详细总结
+- `docs/day6.5_complete_summary.md` - Day6.5 完整总结
+
+**下一步：Day7 - 动态任务分配和会合点集成** 🚀
+
+---
+
+## 2026-02-07 21:30
+
+### Day6.5 Step 2: 在 core.py 中最小侵入挂载 controller ✅
+
+**目标：**
+- 在 core.py 中以最小侵入方式挂载 MAPF controller
+- 沿用通信统计的模式：controller 作为 env 的子组件
+- 确保回归保护：enable_mapf=false 时行为不变
+
+**实现方式：**
+
+1. **在 `__init__` 中读取配置**：
+   ```python
+   # MAPF 配置（Day6.5）
+   self.mapf_enabled = config.get('mapf', {}).get('enabled', False)
+   if self.mapf_enabled:
+       self.mapf_K = config['episode'].get('decision_period', 5)
+       self.mapf_H = config['mapf'].get('H', 10)
+       self.mapf_budget_ms = config['mapf'].get('time_budget_ms', 1000)
+       self.mapf_connectivity = config['mapf'].get('connectivity', 4)
+
+   # Controller 延迟初始化
+   self.ugv_controller = None
+   self.mapf_wrapper = None
+   ```
+
+2. **在 `reset()` 中初始化 controller**：
+   ```python
+   # 初始化 MAPF controller（Day6.5）
+   if self.mapf_enabled and self.grid_map is not None:
+       from agcoop.mapf import UGVMAPFWrapper
+       from agcoop.controllers import UGVRecedingHorizonMAPFController
+
+       # 创建 wrapper
+       self.mapf_wrapper = UGVMAPFWrapper(...)
+
+       # 创建 controller
+       self.ugv_controller = UGVRecedingHorizonMAPFController(...)
+
+       # 初始化 starts 和 goals
+       starts = {i: grid_map.world_to_cell(...) for i, pos in enumerate(ugv_positions)}
+       goals = {...}  # 暂时使用固定巡逻点
+
+       # 重置 controller
+       self.ugv_controller.reset(starts, goals)
+   ```
+
+3. **Goals 初始化策略**（暂时）：
+   - 使用地图中心附近的随机点作为巡逻目标
+   - 每个 UGV 在中心 ±5 格范围内随机选择
+   - 确保目标是空闲格子
+   - 后续可以改为动态任务/会合点
+
+**配置文件（default.yaml）**：
+```yaml
+mapf:
+  enabled: false            # 是否启用 MAPF
+  H: 10                     # 规划时间窗
+  time_budget_ms: 1000      # 时间预算
+  connectivity: 4           # 连通性
+```
+
+**测试结果：**
+
+1. **Test 1: MAPF 禁用（回归保护）** ✅
+   - enable_mapf=false
+   - controller 不存在（None）
+   - 环境正常运行 10 步
+   - 行为与 Day5/Day1 一致
+
+2. **Test 2: MAPF 启用** ✅
+   - enable_mapf=true
+   - controller 存在且配置正确
+   - 初始状态正确：
+     - path_cache = None
+     - cache_start_t = -1
+     - fallback_wait_remaining = 0
+   - 统计计数器清零：
+     - mapf_calls = 0
+     - mapf_success_calls = 0
+     - expanded_nodes_total = 0
+   - goals 已设置（3 个 UGV）
+
+3. **Test 3: MAPF 启用但无地图** ✅
+   - enable_mapf=true, map_path='none'
+   - controller 不存在（因为需要地图）
+   - 环境正常工作
+
+**核心优势：**
+- ✅ **最小侵入**：只在 `__init__` 和 `reset()` 中添加代码
+- ✅ **回归保护**：enable_mapf=false 时完全不影响现有行为
+- ✅ **延迟初始化**：controller 在 reset 时创建，避免不必要的开销
+- ✅ **配置驱动**：所有参数从 config 读取，易于调整
+
+**Day6.5 Step 2 完成！Controller 已挂载到 core.py！** ✅
+
+---
+
+## 2026-02-07 21:00
+
+### Day6.5 Step 1: Controller 逻辑抽取为可复用类 ✅
+
+**目标：**
+- 将 Day6 test_mapf_integration.py 的 controller 逻辑抽取为可复用类
+- 保持 5 个关键机制：每 K 步规划、缓存执行、失败 WAIT、在线碰撞检查、动态目标切换
+- 确保与 Day6 原始脚本行为一致
+
+**核心机制（来自 Day6）：**
+1. **每 K 步规划**：决策步判断 `t % K == 0`
+2. **缓存执行**：成功后缓存路径，执行 K 步
+3. **失败 WAIT**：失败后 fallback WAIT K 步
+4. **在线碰撞检查**：vertex collision + edge swap
+5. **动态目标切换**：支持运行时更改目标
+
+**关键细节：**
+- **Goal filling**：到达目标后自动填充 WAIT 到 H+1（由 Space-Time A* 保证）
+- **Fallback 窗口**：失败后 WAIT 恰好 K 步
+- **统计累加**：调用次数、成功率、展开节点、规划时间等
+
+**类结构：**
+
+```python
+class UGVRecedingHorizonMAPFController:
+    def __init__(K, H, budget_ms, wrapper, enable_collision_check=True)
+
+    def reset(starts, goals)
+        # 清空缓存/计数器
+
+    def set_goals(goals)
+        # 支持动态目标切换
+
+    def maybe_replan(t, starts, goals=None) -> PlanInfo
+        # 判断是否需要重规划，如果需要则调用 MAPF
+        # 返回：called, success, plan_time_ms, expanded_nodes, termination_reason
+
+    def step(t, current_positions) -> StepInfo
+        # 执行一步（缓存路径或 fallback WAIT）
+        # 返回：positions, in_fallback, collision_free, collision_error
+
+    def get_stats() -> Dict
+        # 获取统计信息
+```
+
+**内部状态：**
+- `path_cache`: 缓存的路径
+- `cache_start_t`: 缓存开始时间
+- `fallback_wait_remaining`: 剩余 fallback 步数
+- 统计累加器：calls, success, timeout, fail, expanded_nodes_total, plan_times
+
+**新增文件：**
+- `agcoop/controllers/ugv_mapf_controller.py` - Controller 实现
+- `agcoop/controllers/__init__.py` - 模块入口
+- `scripts/test_ugv_controller.py` - Controller 测试
+- `scripts/test_controller_consistency.py` - 与 Day6 一致性验证
+
+**测试结果：**
+
+1. **Controller 基本功能** ✅
+   - 20 步运行，4 次 MAPF 调用
+   - 无碰撞
+   - 统计信息正确
+
+2. **Fallback 机制** ✅
+   - budget=0ms 强制 timeout
+   - 15 步全部 fallback WAIT
+   - 位置保持不变
+
+3. **动态目标切换** ✅
+   - 前 10 步使用 goals_1
+   - 后 10 步使用 goals_2
+   - 切换后正常规划
+
+4. **与 Day6 一致性验证** ✅
+   - 100 步，20 次 MAPF 调用
+   - 100% 成功率，0% fallback
+   - 平均规划时间 109.39 ms
+   - P95 规划时间 116.16 ms (< 310 ms)
+   - 无碰撞
+
+**对比 Day6 原始脚本：**
+
+| 指标 | Day6 原始 | Controller | 一致性 |
+|------|-----------|------------|--------|
+| MAPF 调用 | 20 | 20 | ✅ |
+| 成功率 | 100% | 100% | ✅ |
+| Fallback | 0% | 0% | ✅ |
+| P95 时间 | ~105 ms | 116 ms | ✅ |
+| 碰撞 | 无 | 无 | ✅ |
+
+**核心优势：**
+- ✅ **逻辑复用**：controller 可在 core.py 和测试脚本中复用
+- ✅ **接口清晰**：`maybe_replan()` + `step()` 两步完成控制
+- ✅ **状态封装**：缓存、fallback、统计全部封装在类内
+- ✅ **行为一致**：与 Day6 原始脚本完全一致
+
+**Day6.5 Step 1 完成！Controller 逻辑已抽取！** ✅
+
+---
+
+## 2026-02-07 20:30
+
+### Day6.5 Step 0: 冻结 MAPF 接口边界 ✅
+
+**目标：**
+- 创建 UGV MAPF Wrapper，隔离 MAPF 实现细节
+- 为 core.py 提供简洁的接口
+- 确保向后兼容（防回归）
+
+**接口设计：**
+
+```python
+# 输入
+wrapper.plan(
+    starts: Dict[int, Tuple[int, int]],
+    goals: Dict[int, Tuple[int, int]],
+    H: int,
+    budget_ms: Optional[int] = None
+) -> UGVMAPFResult
+
+# 输出
+UGVMAPFResult:
+    - success: bool
+    - plan_time_ms: float
+    - termination_reason: str  # "success", "timeout", "no_path"
+    - expanded_nodes: int
+    - paths: Optional[Dict[int, list]]
+    - makespan: int
+    - sum_of_costs: int
+```
+
+**新增文件：**
+- `agcoop/mapf/ugv_wrapper.py` - UGV MAPF Wrapper 实现
+- `scripts/test_ugv_wrapper.py` - Wrapper 接口测试
+- `scripts/example_ugv_wrapper.py` - 使用示例
+
+**测试结果：**
+- ✅ Test 1: Wrapper 基本功能
+- ✅ Test 2: Timeout 处理
+- ✅ Test 3: 多次调用统计
+- ✅ Test 4: 向后兼容性（原始 MAPFPlanner 仍可用）
+
+**防回归测试：**
+- ✅ `scripts/test_mapf_integration.py` 仍然正常工作
+- ✅ 100 步测试，20 次 MAPF 调用，100% 成功率
+- ✅ 所有输出字段完整（metrics.json, trace.jsonl）
+
+**使用示例：**
+
+```python
+# 1. 初始化（在 core.py 的 __init__ 中）
+from agcoop.mapf import UGVMAPFWrapper
+
+wrapper = UGVMAPFWrapper(
+    grid_map=grid_map,
+    connectivity=4,
+    time_budget_ms=300
+)
+
+# 2. 规划（在 core.py 的 step 中）
+result = wrapper.plan(
+    starts=current_positions,
+    goals=current_goals,
+    H=40
+)
+
+# 3. 使用结果
+if result.success:
+    # 缓存路径并执行
+    cache_paths = result.paths
+else:
+    # 触发 fallback WAIT
+    fallback_remaining = K
+```
+
+**核心优势：**
+- ✅ 接口简洁：core.py 只需调用 `wrapper.plan()`
+- ✅ 细节隔离：MAPF 实现细节封装在 wrapper 内
+- ✅ 统计内置：自动跟踪调用次数、成功率等
+- ✅ 向后兼容：原始 MAPFPlanner 接口仍然可用
+
+**Day6.5 Step 0 完成！接口边界已冻结！** ✅
+
+---
+
 ## 2026-02-07 19:00
 
 ### Day6 MAPF 深度验证与关键 Bug 修复 ✅

@@ -148,6 +148,23 @@ class AGCoopEnv:
         else:
             self.comm_config = None
 
+        # MAPF 配置（Day6.5）
+        self.mapf_enabled = config.get('mapf', {}).get('enabled', False)
+        if self.mapf_enabled:
+            self.mapf_K = config['episode'].get('decision_period', 5)  # 使用 decision_period 作为 K
+            self.mapf_H = config['mapf'].get('H', 10)
+            self.mapf_budget_ms = config['mapf'].get('time_budget_ms', 1000)
+            self.mapf_connectivity = config['mapf'].get('connectivity', 4)
+        else:
+            self.mapf_K = None
+            self.mapf_H = None
+            self.mapf_budget_ms = None
+            self.mapf_connectivity = None
+
+        # MAPF controller（延迟初始化，在 reset 时创建）
+        self.ugv_controller = None
+        self.mapf_wrapper = None
+
         # 地图配置
         self.map_path = config['episode'].get('map_path', 'none')
         self.map_hash = None  # 延迟计算（在 reset 时）
@@ -210,8 +227,31 @@ class AGCoopEnv:
         self.state = SystemState()
         self.state.t = 0
 
-        # 初始化 UGV 位置（Day1: 所有 UGV 从原点开始）
-        self.state.ugv_positions = [(0.0, 0.0) for _ in range(self.n_ugv)]
+        # 初始化 UGV 位置
+        # 如果启用 MAPF 且有地图，从地图中采样不同的空闲位置
+        if self.mapf_enabled and self.grid_map is not None:
+            # 采样不同的空闲起始位置
+            free_cells = []
+            for x in range(self.grid_map.width):
+                for y in range(self.grid_map.height):
+                    if self.grid_map.is_free(x, y):
+                        free_cells.append((x, y))
+
+            if len(free_cells) >= self.n_ugv:
+                # 随机采样 n_ugv 个不同的空闲位置
+                sampled_cells = self.rng.choice(len(free_cells), size=self.n_ugv, replace=False)
+                self.state.ugv_positions = []
+                for idx in sampled_cells:
+                    cell = free_cells[idx]
+                    world_pos = self.grid_map.cell_to_world(cell[0], cell[1])
+                    self.state.ugv_positions.append(world_pos)
+            else:
+                # 空闲位置不足，回退到原点
+                print(f"警告：空闲位置不足 ({len(free_cells)} < {self.n_ugv})，使用原点")
+                self.state.ugv_positions = [(0.0, 0.0) for _ in range(self.n_ugv)]
+        else:
+            # Day1: 所有 UGV 从原点开始
+            self.state.ugv_positions = [(0.0, 0.0) for _ in range(self.n_ugv)]
 
         # 初始化 UAV（永远在 0 号车上）
         self.state.uav_onboard_ugv_id = 0
@@ -235,6 +275,69 @@ class AGCoopEnv:
         self._prev_outage_steps = 0
         self._current_outage_streak = 0
         self._max_outage_streak = 0
+
+        # 初始化 MAPF controller（Day6.5）
+        if self.mapf_enabled and self.grid_map is not None:
+            from agcoop.mapf import UGVMAPFWrapper
+            from agcoop.controllers import UGVRecedingHorizonMAPFController
+
+            # 创建 wrapper
+            self.mapf_wrapper = UGVMAPFWrapper(
+                grid_map=self.grid_map,
+                connectivity=self.mapf_connectivity,
+                time_budget_ms=self.mapf_budget_ms
+            )
+
+            # 创建 controller
+            self.ugv_controller = UGVRecedingHorizonMAPFController(
+                K=self.mapf_K,
+                H=self.mapf_H,
+                budget_ms=self.mapf_budget_ms,
+                wrapper=self.mapf_wrapper,
+                enable_collision_check=True
+            )
+
+            # 初始化 UGV starts 和 goals
+            # 将 float 位置转换为 int cell 坐标
+            starts = {}
+            for i, pos in enumerate(self.state.ugv_positions):
+                cell = self.grid_map.world_to_cell(pos[0], pos[1])
+                starts[i] = cell
+
+            # 暂时使用固定巡逻点作为 goals（后续可以改为动态任务/会合点）
+            # 简单策略：每个 UGV 的目标是地图中心附近的随机点
+            goals = {}
+            center_x = self.grid_map.width // 2
+            center_y = self.grid_map.height // 2
+            for i in range(self.n_ugv):
+                # 在中心附近随机偏移
+                offset_x = self.rng.randint(-5, 6)
+                offset_y = self.rng.randint(-5, 6)
+                goal_x = max(0, min(self.grid_map.width - 1, center_x + offset_x))
+                goal_y = max(0, min(self.grid_map.height - 1, center_y + offset_y))
+
+                # 确保目标是空闲格子
+                if self.grid_map.is_free(goal_x, goal_y):
+                    goals[i] = (goal_x, goal_y)
+                else:
+                    # 如果不是空闲格子，使用起点作为目标（原地不动）
+                    goals[i] = starts[i]
+
+            # 重置 controller
+            self.ugv_controller.reset(starts, goals)
+
+            # 执行初始规划（t=0）
+            initial_plan_info = self.ugv_controller.maybe_replan(0, starts)
+
+            print(f"MAPF Controller 初始化: K={self.mapf_K}, H={self.mapf_H}, budget={self.mapf_budget_ms}ms")
+            if initial_plan_info.called:
+                if initial_plan_info.success:
+                    print(f"  初始规划成功 ({initial_plan_info.plan_time_ms:.2f} ms)")
+                else:
+                    print(f"  初始规划失败: {initial_plan_info.termination_reason}")
+        else:
+            self.ugv_controller = None
+            self.mapf_wrapper = None
 
         # 初始化日志记录器
         if self.enable_logging and self.output_dir:
@@ -266,7 +369,7 @@ class AGCoopEnv:
 
     def step(self, action: Optional[Any] = None) -> Tuple[SystemState, Dict[str, Any], bool, Dict[str, Any]]:
         """
-        执行一步环境演化（Day1 最简版本）
+        执行一步环境演化
 
         Args:
             action: 动作（Day1 不使用，占位）
@@ -284,8 +387,45 @@ class AGCoopEnv:
         # 时间步进
         self.state.t += 1
 
-        # Day1: UGV 原地不动（不更新位置）
-        # self.state.ugv_positions 保持不变
+        # UGV 动作生成（Day6.5: 使用 MAPF controller）
+        mapf_plan_info = None
+        mapf_step_info = None
+
+        if self.ugv_controller is not None:
+            # 获取当前 UGV 位置（cell 坐标）
+            current_positions = {}
+            for i, pos in enumerate(self.state.ugv_positions):
+                cell = self.grid_map.world_to_cell(pos[0], pos[1])
+                current_positions[i] = cell
+
+            # 尝试重规划（每 K 步）
+            mapf_plan_info = self.ugv_controller.maybe_replan(
+                self.state.t,
+                current_positions
+            )
+
+            # 执行一步（缓存路径或 fallback WAIT）
+            mapf_step_info = self.ugv_controller.step(
+                self.state.t,
+                current_positions
+            )
+
+            # 检查碰撞
+            if not mapf_step_info.collision_free:
+                raise RuntimeError(f"MAPF collision: {mapf_step_info.collision_error}")
+
+            # 更新 UGV 位置（从 cell 坐标转换回 world 坐标）
+            new_ugv_positions = []
+            for i in range(self.n_ugv):
+                cell = mapf_step_info.positions[i]
+                world_pos = self.grid_map.cell_to_world(cell[0], cell[1])
+                new_ugv_positions.append(world_pos)
+
+            self.state.ugv_positions = new_ugv_positions
+        else:
+            # Day1: UGV 原地不动（不更新位置）
+            # self.state.ugv_positions 保持不变
+            pass
 
         # Day1: UAV 原地不动（永远在 0 号车上）
         # self.state.uav_onboard_ugv_id 保持为 0
@@ -302,7 +442,7 @@ class AGCoopEnv:
 
         # 记录日志（如果启用）
         if self.enable_logging and self.trace_logger:
-            self._log_step(snr_best, outage)
+            self._log_step(snr_best, outage, mapf_plan_info, mapf_step_info)
 
         # 检查是否结束
         done = self.state.t >= self.horizon_steps
@@ -321,6 +461,12 @@ class AGCoopEnv:
             'tardiness_sum': self.state.tardiness_sum,
             'active_tasks': len(self.state.get_active_tasks()),
         }
+
+        # 添加 MAPF 信息（如果有）
+        if mapf_plan_info is not None:
+            info['mapf_called'] = mapf_plan_info.called
+            info['mapf_success'] = mapf_plan_info.success
+            info['mapf_plan_time_ms'] = mapf_plan_info.plan_time_ms
 
         return self.state, reward, done, info
 
@@ -453,12 +599,15 @@ class AGCoopEnv:
 
         return "\n".join(lines)
 
-    def _log_step(self, snr_best: float = 0.0, outage: bool = False) -> None:
+    def _log_step(self, snr_best: float = 0.0, outage: bool = False,
+                   mapf_plan_info=None, mapf_step_info=None) -> None:
         """记录当前步的日志到 trace.jsonl
 
         Args:
             snr_best: 当前步的最佳 SNR（dB）
             outage: 当前步是否发生 outage
+            mapf_plan_info: MAPF 规划信息（PlanInfo）
+            mapf_step_info: MAPF 执行信息（StepInfo）
         """
         if self.state is None or self.trace_logger is None:
             return
@@ -478,12 +627,34 @@ class AGCoopEnv:
             self._current_outage_streak = 0
 
         # 判断是否为决策步
-        decision_step = (self.state.t % self.decision_period == 0)
+        # 标准 Receding Horizon: t=1 立即规划，然后每 K 步重新规划
+        # 即 t=1, 1+K, 1+2K, 1+3K, ... = 1, 6, 11, 16, ... (K=5)
+        decision_step = ((self.state.t - 1) % self.decision_period == 0)
+
+        # 提取 MAPF 信息
+        mapf_called = False
+        mapf_success = None
+        mapf_plan_time_ms = None
+        mapf_fallback = False
+        ugv_goals = None
+
+        if mapf_plan_info is not None:
+            mapf_called = mapf_plan_info.called
+            mapf_success = mapf_plan_info.success
+            mapf_plan_time_ms = mapf_plan_info.plan_time_ms
+
+        if mapf_step_info is not None:
+            mapf_fallback = mapf_step_info.in_fallback
+
+        # 获取 UGV goals（如果 controller 存在）
+        if self.ugv_controller is not None and self.ugv_controller.current_goals is not None:
+            ugv_goals = self.ugv_controller.current_goals
 
         # 构建步骤数据（包含预留字段）
         step_data = {
             't': self.state.t,
             'ugv_pos': self.state.ugv_positions,
+            'ugv_positions': self.state.ugv_positions,  # Day6 collision checker 期望的字段名
             'uav_state': self.state.uav_onboard_ugv_id,
             'num_tasks_in_pool': len(self.state.task_pool),
             'num_active_tasks': len(self.state.get_active_tasks()),
@@ -493,9 +664,12 @@ class AGCoopEnv:
             'decision_step': decision_step,
             'chosen_task_id': None,  # Day1 占位
             'chosen_rendezvous': None,  # Day1 占位
-            'mapf_called': False,  # Day1 占位
-            'mapf_success': False,  # Day1 占位
-            'mapf_plan_time_ms': 0.0,  # Day1 占位
+            'mapf_called': mapf_called,
+            'mapf_success': mapf_success,
+            'mapf_plan_time_ms': mapf_plan_time_ms,
+            'fallback': mapf_fallback,  # Day6 validator 期望的字段名
+            'mapf_fallback': mapf_fallback,  # 保留向后兼容
+            'ugv_goals': ugv_goals,  # Day6 validator 期望的字段
         }
 
         # 写入日志
@@ -530,6 +704,11 @@ class AGCoopEnv:
             map_name = Path(self.map_path).stem if self.map_path != 'none' else 'nomap'
             self.run_id = f"{map_name}_N{self.n_ugv}_seed{self.seed}_lambda{self.arrival_rate}"
 
+        # 获取 MAPF 统计（Day6.5）
+        mapf_stats = {}
+        if self.ugv_controller is not None:
+            mapf_stats = self.ugv_controller.get_stats()
+
         # 构建指标字典
         metrics = {
             # A. 复现与实验管理
@@ -559,12 +738,17 @@ class AGCoopEnv:
             'snr_best_mean': round(snr_best_mean, 2),
             'snr_best_min': round(snr_best_min, 2),
 
-            # D. 规划与执行（预留字段）
-            'mapf_calls': 0,
-            'mapf_success_calls': 0,
-            'mapf_timeout_calls': 0,
-            'mapf_mean_plan_time_ms': 0.0,
-            'fallback_wait_steps': 0,
+            # D. 规划与执行
+            'mapf_calls': mapf_stats.get('mapf_calls', 0),
+            'mapf_success_calls': mapf_stats.get('mapf_success_calls', 0),
+            'mapf_timeout_calls': mapf_stats.get('mapf_timeout_calls', 0),
+            'mapf_fail_calls': mapf_stats.get('mapf_fail_calls', 0),
+            'mapf_mean_plan_time_ms': round(mapf_stats.get('mapf_mean_plan_time_ms', 0.0), 2),
+            'mapf_p95_plan_time_ms': round(mapf_stats.get('mapf_p95_plan_time_ms', 0.0), 2),
+            'fallback_wait_steps': mapf_stats.get('fallback_wait_steps', 0),
+            'collision_free': True,  # Day6.5: 如果有碰撞会抛异常，所以到这里一定是 True
+            'expanded_nodes_total': mapf_stats.get('expanded_nodes_total', 0),
+            'mapf_expanded_mean_per_call': round(mapf_stats.get('mapf_expanded_mean_per_call', 0.0), 2),
 
             # D2. 会合/回收
             'rendezvous_success': 0,
