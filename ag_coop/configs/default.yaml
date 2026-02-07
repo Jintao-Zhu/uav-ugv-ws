@@ -1,17 +1,43 @@
 episode:
   horizon_steps: 500
-  decision_period: 5   # K
-  map_path: "maps/map_01.map"   # 先占位，后面再换成你的地图路径
+  decision_period: 5   # K - 每 K 步做一次决策
+  map_path: "maps/map_01.map"
   seed: 0
 
 robots:
   n_ugv: 3
   n_uav: 1
 
+uav:
+  speed_cells_per_step: 1      # UAV 速度（格/步）
+  neighbor_mode: 8             # UAV 用 8 邻接（近似空中，可斜飞）
+  service_time: 2              # 到点服务时间（步数）
+  loiter_energy_cost: 1        # 悬停能量消耗（可先不用能量，留字段）
+  meet_window: 3               # 会合时间窗：±3 步
+  max_loiter_steps: 20         # 最大悬停等待时间（超过触发 emergency）
+
+ugv:
+  speed_cells_per_step: 1      # UGV 速度（格/步）
+  neighbor_mode: 4             # UGV 用 4 邻接（更像车，不能斜走）
+  hold_steps: 5                # 会合点等待时间（步数）
+  carrier_id: 0                # Day5 固定用 0 号车当载机（最稳）
+
+rendezvous:
+  candidate_count: 12          # 候选会合点数量
+  mode: "candidates"           # 候选点离散化模式
+  score_alpha_snr: 1.0         # SNR 权重
+  score_beta_eta: 0.3          # ETA 权重
+
+sync_depart:
+  enabled: true                # 是否启用同步出发机制
+  buffer_steps: 2              # 希望 UGV 比 UAV 早到不超过 2 步（保守）
+  max_depart_delay: 30         # UGV 最多延迟出发 30 步，防止拖太久
+  min_trigger_gap: 1           # (eta_uav - eta_ugv) 至少大于 1 才触发延迟
+
 tasks:
   enabled: true
   arrival_process: "bernoulli"  # 到达过程类型（目前仅支持 bernoulli）
-  arrival_rate: 0.1             # 每步生成任务概率（校准后：miss_rate=28.5%）
+  arrival_rate: 0.1             # 每步生成任务概率（校准后：miss_rate=23.4%）
   deadline_min: 25              # 最小 deadline（步数）
   deadline_max: 60              # 最大 deadline（步数）
   max_active: 20                # 任务池最大容量（满了丢弃新任务）
@@ -19,7 +45,7 @@ tasks:
   service_time: 2               # 到点服务时间（步数）
   # 任务负载 profile（可选）：
   # - light: arrival_rate=0.05, deadline=[25,60] (miss_rate=1.2%, 压力很小)
-  # - default: arrival_rate=0.10, deadline=[25,60] (miss_rate=28.5%, 平衡)
+  # - default: arrival_rate=0.10, deadline=[25,60] (miss_rate=23.4%, 平衡)
   # - heavy: arrival_rate=0.20, deadline=[25,60] (miss_rate=69.5%, 压力大)
 
 comm:
@@ -33,6 +59,13 @@ comm:
   # - relaxed: -12.0 dB (6% outage, 通信宽松)
   # - default: -9.0 dB (14% outage, 平衡)
   # - strict: -7.0 dB (26% outage, 通信苛刻)
+
+mapf:
+  enabled: false            # 是否启用 MAPF（Day6 集成）
+  H: 10                     # 规划时间窗（步数）
+  time_budget_ms: 1000      # MAPF 求解时间预算（毫秒）
+  connectivity: 4           # UGV 连通性（4 邻接）
+  priority: "carrier_first" # 优先级策略：carrier 优先
 
 logging:
   out_dir: "outputs"
