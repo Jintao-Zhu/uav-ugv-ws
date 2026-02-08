@@ -1,0 +1,65 @@
+episode:
+  horizon_steps: 500
+  decision_period: 5
+  map_path: "maps/map_01.map"  # 使用现有地图，有一定遮挡
+  seed: 0
+
+robots:
+  n_ugv: 2  # 减少 UGV 数量（从 3 → 2），让覆盖范围更小
+  n_uav: 1
+
+uav:
+  speed_cells_per_step: 1
+  neighbor_mode: 8
+  service_time: 2
+  loiter_energy_cost: 1
+  meet_window: 3
+  max_loiter_steps: 20
+
+ugv:
+  speed_cells_per_step: 1
+  neighbor_mode: 4
+  hold_steps: 5
+  carrier_id: 0
+
+rendezvous:
+  candidate_count: 12
+  mode: "candidates"
+  score_alpha_snr: 1.0
+  score_beta_eta: 0.3
+
+sync_depart:
+  enabled: true
+  buffer_steps: 2
+  max_depart_delay: 30
+  min_trigger_gap: 1
+
+tasks:
+  enabled: true
+  arrival_process: "bernoulli"
+  arrival_rate: 0.15           # 增加任务生成率（从 0.1 → 0.15）
+  deadline_min: 25
+  deadline_max: 60
+  max_active: 20
+  top_m: 5
+  service_time: 2
+
+comm:
+  enabled: true
+  tx_power_db: 0.0
+  pathloss_n: 3.0              # 进一步增加路径损耗指数（从 2.5 → 3.0）
+  obstacle_penalty_db: 15.0    # 大幅增加障碍物惩罚（从 10.0 → 15.0）
+  snr_threshold_db: 25.0       # 大幅提高 SNR 阈值（从 0.0 → 25.0），即使近距离也可能 outage
+  eps_m: 0.05
+
+mapf:
+  enabled: false
+  H: 40
+  time_budget_ms: 300
+  connectivity: 4
+  priority: "carrier_first"
+
+logging:
+  out_dir: "outputs"
+  save_trace: true
+  save_metrics: true

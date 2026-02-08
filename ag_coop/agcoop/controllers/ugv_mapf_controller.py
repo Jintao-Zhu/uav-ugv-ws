@@ -155,9 +155,9 @@ class UGVRecedingHorizonMAPFController:
             self.current_goals = dict(goals)
 
         # 判断是否是决策步
-        # 标准 Receding Horizon: t=1 立即规划，然后每 K 步重新规划
-        # 即 t=1, 1+K, 1+2K, 1+3K, ... = 1, 6, 11, 16, ... (K=5)
-        decision_step = ((t - 1) % self.K == 0)
+        # 标准 Receding Horizon: t=0 立即规划，然后每 K 步重新规划
+        # 即 t=0, K, 2K, 3K, ... = 0, 5, 10, 15, ... (K=5)
+        decision_step = (t % self.K == 0)
 
         # 如果在 fallback 状态且是决策步，清零 fallback（准备重新规划）
         if decision_step and self.fallback_wait_remaining > 0:

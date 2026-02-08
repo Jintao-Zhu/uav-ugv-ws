@@ -9,9 +9,13 @@ from .ugv_mapf_controller import (
     PlanInfo,
     StepInfo
 )
+from .ugv_greedy_controller import UGVGreedyController
+from .ugv_coverage_controller import UGVCoverageController
 
 __all__ = [
     'UGVRecedingHorizonMAPFController',
+    'UGVGreedyController',
+    'UGVCoverageController',
     'PlanInfo',
     'StepInfo'
 ]
