@@ -1,5 +1,895 @@
 # 开发日志
 
+> **注意**: 最新的更新在文件开头！请从顶部开始阅读最新内容。
+
+---
+
+## Day9: RL Environment Design ✅ COMPLETED
+
+**Date**: 2026-02-09
+**Status**: ✅ **验收通过**
+**Goal**: Convert current system to standard RL environment with stable `reset()`/`step()` interface
+
+### 🎯 Day9 完成总结
+
+**目标**: 将系统转换为标准 RL 环境，准备 PPO 训练
+
+**完成的 6 个步骤**:
+1. ✅ **Step 1**: 冻结 RL 控制点与时序 (K=5)
+2. ✅ **Step 2**: 设计 Action Space (MultiDiscrete([6, 13]))
+3. ✅ **Step 3**: 设计 Observation Space (Dict → Box(68,))
+4. ✅ **Step 4**: 定义 Reward Function (5 个组成部分)
+5. ✅ **Step 5**: Gym Env Wrapper 实现 (AGCoopGymEnv)
+6. ✅ **Step 6**: Random Policy Smoke Test (10 episodes 全部通过)
+
+### 📊 最终验收结果
+
+**Random Policy Smoke Test** (10 episodes, seed=4000-4009):
+```
+✅ 连续 10 episodes 全部跑完 (崩溃次数: 0)
+✅ 无 NaN/Inf (所有观测和奖励都是 finite)
+✅ 输出目录完整 (metrics.json + rollout.jsonl)
+✅ Metrics 自洽性验证通过 (派生指标与计数一致)
+
+平均指标:
+  Total reward: 17.77
+  Tasks completed: 40.90
+  Deadline miss rate: 49.50%
+  Outage percent (worst_nc): 64.50%
+```
+
+### 🔧 关键修复
+
+**问题**: `get_metrics()` 只返回基础计数，派生指标默认为 0
+
+**解决方案**: 扩展 `get_metrics()` 方法，计算所有派生指标：
+- `completion_rate = (tasks_completed / total_tasks * 100)`
+- `deadline_miss_rate = (deadline_miss / tasks_completed * 100)`
+- `mean_tardiness = (tardiness_sum / deadline_miss)`
+- 通信指标 (outage_percent_worst_nc, snr_best_nc_mean/min)
+- MAPF 统计 (mapf_success_rate)
+
+**验证**: 所有派生指标与计数一致，无静默默认值 ✅
+
+### 📁 交付物
+
+**核心实现**:
+- `agcoop/env/core.py` - 扩展 `get_metrics()` 方法
+- `agcoop/env/wrappers.py` - FlattenObservation 和 NormalizeReward
+- `agcoop/rl/agcoop_gym_env.py` - AGCoopGymEnv 包装类
+
+**验证脚本** (7 个):
+- `scripts/test_day9_step1_decision_timing.py` ✅
+- `scripts/test_day9_step2_action_space.py` ✅
+- `scripts/test_day9_step2_decision_action.py` ✅
+- `scripts/test_day9_step3_observation.py` ✅
+- `scripts/test_day9_step4_reward.py` ✅
+- `scripts/test_day9_step5_gym_env.py` ✅
+- `scripts/day9_smoke_random_policy.py` ✅
+
+**文档报告** (8 个):
+- `DAY9_STEP1_REPORT.md` through `DAY9_STEP5_REPORT.md`
+- `DAY9_SUMMARY.md`
+- `DAY9_FINAL_REPORT.md`
+- `DAY9_ACCEPTANCE_REPORT.md`
+
+### 🚀 准备就绪：Day10 PPO 训练
+
+**RL 环境特性**:
+- ✅ 标准 Gym 接口
+- ✅ Gymnasium 兼容
+- ✅ Stable-Baselines3 兼容
+- ✅ 无 NaN/Inf，稳定运行
+- ✅ Metrics 自洽，派生指标正确
+- ✅ 输出格式与 Day7/Day8 兼容
+
+**使用示例**:
+```python
+from agcoop.rl import AGCoopGymEnv
+from agcoop.env.wrappers import FlattenObservation
+
+env = FlattenObservation(AGCoopGymEnv(config))
+obs, info = env.reset(seed=42)
+obs, reward, terminated, truncated, info = env.step(action)
+```
+
+---
+
+## Day9: RL Environment Design (DETAILED STEPS) 🚧
+
+**Date**: 2026-02-09
+**Goal**: Convert current system to standard RL environment with stable `reset()`/`step()` interface
+
+### Overview
+
+Converting the Day8 closed-loop system into a standard RL environment to enable PPO training. The goal is to make the system "trainable" first, then optimize for performance.
+
+### Step 1: Freeze RL Control Points & Timing ✅
+
+**Goal**: Ensure RL actions only apply at decision steps (`t % K == 0`)
+
+**Implementation**:
+1. Added decision step detection in `step()`:
+   ```python
+   is_decision_step = (self.state.t % self.decision_period == 0)
+   ```
+
+2. Modified action application logic:
+   - Decision steps: Apply action and update goals
+   - Non-decision steps: Continue executing cached paths (receding horizon)
+
+3. Added info flags:
+   ```python
+   info = {
+       'decision_step': is_decision_step,
+       'action_applied': action_applied,
+       ...
+   }
+   ```
+
+**Validation Results**:
+```
+✅ Decision step count: 100/100 (K=5, steps=500)
+✅ Non-decision steps: 0 violations (action_applied=False)
+✅ Multiple K values tested: K∈{3,5,8,10} all pass
+```
+
+**Files Modified**:
+- `agcoop/env/core.py`: Modified `step()` function
+- `scripts/test_day9_step1_decision_timing.py`: Basic validation
+- `scripts/test_day9_step1_multiple_K.py`: Extended validation
+
+**Key Design**:
+- Consistent with Day6 receding horizon structure
+- Decision steps: t=0, K, 2K, 3K, ...
+- Non-decision steps: Execute cached MAPF paths
+
+---
+
+### Step 2: Design Action Space ✅
+
+**Goal**: Define minimal viable action space (先"可训"，再"聪明")
+
+**Action Space Design**:
+- Format: `MultiDiscrete([M+1, R+1])`
+- **task_choice** ∈ {0..M}:
+  - 0: Don't specify task (fallback to default)
+  - 1..M: Select from Top-M tasks (sorted by deadline)
+- **relay_target** ∈ {0..R}:
+  - 0: Don't specify relay (keep current)
+  - 1..R: Select from candidate relay points
+
+**Configuration**:
+- M = `config['tasks']['top_m']` (default: 5)
+- R = `config['rendezvous']['candidate_count']` (default: 12)
+- Default action space: `MultiDiscrete([6, 13])` (78 discrete options)
+
+**Implementation**:
+
+1. **Added `action_space` property**:
+   ```python
+   @property
+   def action_space(self):
+       return spaces.MultiDiscrete([self.top_m + 1, self.candidate_count + 1])
+   ```
+
+2. **Implemented `_apply_rl_action()` method**:
+   - Parse action: `[task_choice, relay_target]`
+   - Validate and clamp out-of-bounds indices
+   - Get Top-M tasks (sorted by deadline - EDF)
+   - Assign carrier UGV to selected task
+   - Assign non-carrier UGVs to selected relay point
+   - Return `(goals, action_valid, error_msg)`
+
+3. **Modified `step()` function**:
+   ```python
+   if is_decision_step:
+       if action is not None:
+           # RL strategy: apply action
+           goals, action_valid, action_error = self._apply_rl_action(action, current_positions)
+           action_applied = True
+       elif self.method in ["greedy", "coverage", "comm_greedy"]:
+           # Heuristic strategy
+           goals = self._compute_xxx_goals(current_positions)
+           action_applied = True
+   ```
+
+4. **Added RL controller initialization**:
+   ```python
+   elif self.method == "rl" and self.grid_map is not None:
+       self.ugv_controller = UGVGreedyController(K=K, grid_map=self.grid_map, connectivity=4)
+       self.ugv_controller.reset(starts, goals)
+   ```
+
+**Key Features**:
+- **High-level selection**: RL only decides "which task/relay", low-level pathfinding uses existing BFS/MAPF
+- **Safe fallback**: Out-of-bounds actions auto-clamped, invalid positions fallback to current position
+- **Information transparency**: `info` includes `action_valid` and `action_error`
+
+**Validation Results**:
+
+*Basic Test*:
+```
+✅ action_space.sample() works
+✅ Out-of-bounds actions auto-clamped
+✅ Random actions run 100 steps without crash
+```
+
+*Decision Step Test*:
+```
+✅ All decision steps apply action
+✅ Out-of-bounds actions handled correctly
+
+Test cases:
+  - [1, 1]: Select 1st task + 1st relay ✓
+  - [2, 3]: Select 2nd task + 3rd relay ✓
+  - [0, 5]: No task, only relay ✓
+  - [3, 0]: Only task, no relay ✓
+  - [10, 20]: Out-of-bounds (clamped to [5, 12]) ✓
+```
+
+**Files Modified**:
+- `agcoop/env/core.py`:
+  - Added `action_space` property
+  - Added `_apply_rl_action()` method
+  - Modified `step()` to support RL actions
+  - Added RL controller initialization in `reset()`
+- `scripts/test_day9_step2_action_space.py`: Basic validation
+- `scripts/test_day9_step2_decision_action.py`: Decision step validation
+
+**Action Space Examples** (M=5, R=12):
+- `[0, 0]`: Don't specify task/relay (keep default)
+- `[1, 5]`: Most urgent task + 5th relay point
+- `[3, 0]`: 3rd urgent task + no relay
+- `[0, 8]`: No task + 8th relay point
+
+**Key Design Decisions**:
+
+1. **Task Selection Strategy**: Top-M sorted by deadline (EDF - Earliest Deadline First)
+   ```python
+   active_tasks_sorted = sorted(active_tasks, key=lambda t: t.deadline)
+   top_m_tasks = active_tasks_sorted[:self.top_m]
+   ```
+
+2. **Goal Assignment**:
+   - Carrier UGV (ID=0): Assigned to selected task location
+   - Non-carrier UGVs (ID=1,2): Assigned to selected relay point
+
+3. **Safe Fallback**:
+   ```python
+   if task_choice < 0 or task_choice > self.top_m:
+       task_choice = np.clip(task_choice, 0, self.top_m)
+       action_valid = False
+   ```
+
+**Comparison with Day8 Heuristic**:
+
+| Dimension | Day8 Heuristic | Day9 RL |
+|-----------|----------------|---------|
+| Task selection | Greedy (nearest) | RL learns (Top-M) |
+| Relay selection | Coverage (fixed rules) | RL learns (candidates) |
+| Communication weight | Fixed λ | RL implicitly learns |
+| Adaptability | Fixed policy | Dynamic learning |
+
+**Status**: ✅ COMPLETED
+
+**Next**: Step 3 - Define observation space
+
+### Step 3: Design Observation Space ✅
+
+**Goal**: Define observation space (Dict format, with FlattenObservation wrapper)
+
+**Observation Space Design**:
+- Format: `gymnasium.spaces.Dict`
+- All values normalized to [0, 1], dtype=float32
+
+**Components**:
+
+1. **ugv_pos**: (N, 2) - UGV positions (grid coordinates, normalized)
+2. **uav_state**: (3,) - [onboard_ugv_id, uav_mode, reserved]
+3. **tasks_topM**: (M, 4) - Top-M tasks [x, y, deadline_norm, available_flag]
+   - Sorted by deadline (EDF - Earliest Deadline First)
+4. **comm**: (3,) - [snr_best_nc, outage_worst_nc, best_ugv_id_nc]
+   - Uses Day8 worst_nc metrics
+5. **candidates_R**: (R, 3) - Candidate relay points [x, y, dist_to_carrier]
+
+**Default dimensions** (N=3, M=5, R=12):
+- Total Dict keys: 5
+- Flattened size: 68 dimensions (36+3+20+3+6)
+
+**Implementation**:
+
+1. **Added `observation_space` property**:
+   ```python
+   @property
+   def observation_space(self):
+       return spaces.Dict({
+           'ugv_pos': spaces.Box(low=0.0, high=1.0, shape=(N, 2), dtype=np.float32),
+           'uav_state': spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32),
+           'tasks_topM': spaces.Box(low=0.0, high=1.0, shape=(M, 4), dtype=np.float32),
+           'comm': spaces.Box(low=0.0, high=1.0, shape=(3,), dtype=np.float32),
+           'candidates_R': spaces.Box(low=0.0, high=1.0, shape=(R, 3), dtype=np.float32),
+       })
+   ```
+
+2. **Implemented `_get_observation()` method**:
+   - Extract UGV positions and normalize
+   - Extract UAV state
+   - Get Top-M tasks sorted by deadline
+   - Extract communication metrics (worst_nc)
+   - Calculate candidate relay point distances
+   - Validate no NaN/Inf (auto-fix if found)
+
+3. **Modified `reset()` and `step()` to return obs**:
+   ```python
+   def reset(self) -> Dict[str, np.ndarray]:
+       # ... initialization ...
+       return self._get_observation()
+
+   def step(self, action) -> Tuple[Dict[str, np.ndarray], float, bool, Dict]:
+       # ... execution ...
+       obs = self._get_observation()
+       return obs, reward, done, info
+   ```
+
+4. **Created FlattenObservation wrapper**:
+   - Converts Dict obs to single Box vector
+   - Preserves original Dict in `info['obs_dict']`
+   - Total size: 68 dimensions
+
+**Validation Results**:
+
+*Basic Test*:
+```
+✅ All keys present and fixed
+✅ Shapes match: ugv_pos(3,2), uav_state(3), tasks_topM(5,4), comm(3), candidates_R(12,3)
+✅ Dtype: all float32
+✅ No NaN/Inf in initial observation
+```
+
+*Consistency Test (100 steps)*:
+```
+✅ Keys consistent across all steps
+✅ Shapes consistent across all steps
+✅ Dtypes consistent across all steps
+✅ No NaN/Inf in any step
+```
+
+*FlattenObservation Wrapper*:
+```
+✅ Wrapper initialization successful
+✅ Flattened shape: (68,)
+✅ Reset and step work correctly
+✅ No NaN/Inf in flattened obs
+```
+
+**Files Modified**:
+- `agcoop/env/core.py`:
+  - Added `_observation_space` initialization
+  - Added `observation_space` property
+  - Added `_get_observation()` method
+  - Modified `reset()` to return obs
+  - Modified `step()` to return obs
+- `agcoop/env/wrappers.py`: FlattenObservation and NormalizeReward wrappers
+- `agcoop/env/__init__.py`: Export wrappers
+- `scripts/test_day9_step3_observation.py`: Validation script
+
+**Key Design Decisions**:
+
+1. **Normalization**: All values to [0, 1] for neural network training
+2. **Task Sorting**: EDF (Earliest Deadline First) for Top-M tasks
+3. **Communication Metrics**: Use worst_nc from Day8 to capture "UGV falling behind"
+4. **NaN/Inf Handling**: Auto-fix with `np.nan_to_num()` to prevent crashes
+5. **Dict vs Flattened**: Provide both formats (Dict for debugging, Flattened for PPO)
+
+**Status**: ✅ COMPLETED
+
+**Next**: Step 4 - Define reward function
+
+### Step 4: Define Reward Function ✅
+
+**Goal**: Implement stable, computable reward function
+
+**Reward Components**:
+
+1. **Task completion**: `+1.0 × Δtasks_completed`
+   - Reward for newly completed tasks in current step
+   
+2. **Time penalty**: `-0.01`
+   - Fixed penalty per step to encourage efficiency
+   
+3. **Communication penalty**: `-0.05 × outage_nc`
+   - Penalty based on worst_nc outage percentage [0, 1]
+   - Aligns with Day8 comm_greedy metrics
+   
+4. **Deadline penalty**: `-0.1 × Δdeadline_miss`
+   - Penalty for newly missed deadlines
+   
+5. **MAPF timeout penalty**: `-0.2 × mapf_timeout`
+   - Penalty when MAPF planning fails/times out
+
+**Total Reward**:
+```python
+total_reward = r_task + r_time + r_comm + r_deadline + r_mapf
+```
+
+**Implementation**:
+
+1. **Added `_compute_reward()` method**:
+   ```python
+   def _compute_reward(
+       self,
+       prev_tasks_completed: int,
+       prev_deadline_miss: int,
+       prev_tardiness_sum: int,
+       current_outage_nc: float,
+       mapf_timeout: bool
+   ) -> Tuple[float, Dict[str, float]]:
+       # Calculate deltas
+       delta_tasks = self.state.tasks_completed - prev_tasks_completed
+       delta_miss = self.state.deadline_miss - prev_deadline_miss
+       
+       # Compute components
+       r_task = 1.0 * delta_tasks
+       r_time = -0.01
+       r_comm = -0.05 * current_outage_nc
+       r_deadline = -0.1 * delta_miss
+       r_mapf = -0.2 if mapf_timeout else 0.0
+       
+       total_reward = r_task + r_time + r_comm + r_deadline + r_mapf
+       
+       # Safety check
+       if not np.isfinite(total_reward):
+           total_reward = 0.0
+       
+       return total_reward, reward_components
+   ```
+
+2. **Modified `step()` method**:
+   - Record previous state before step execution
+   - Compute reward after state updates
+   - Add `reward_components` to info dict
+
+**Validation Results**:
+
+*Reward Finite Test (100 steps)*:
+```
+✅ NaN/Inf count: 0
+✅ Total reward: 0.6500
+✅ Mean reward: 0.0065
+✅ Range: [-0.0600, 0.9900]
+
+Components:
+  - r_task: +3.0000 (3 tasks completed)
+  - r_time: -1.0000 (100 steps × -0.01)
+  - r_comm: -1.3500 (communication penalty)
+  - r_deadline: 0.0000 (no deadline misses)
+  - r_mapf: 0.0000 (no MAPF timeouts)
+```
+
+*Reward Variance Test (3 seeds, 100 steps each)*:
+```
+✅ Seed 1000: sum_reward = -1.4500
+✅ Seed 1001: sum_reward = 2.1000
+✅ Seed 1002: sum_reward = 0.6500
+✅ Different seeds produce different rewards (responsive)
+```
+
+*Reward Components Test (50 steps)*:
+```
+✅ r_task: 1 task completion event
+✅ r_time: 50 steps with -0.01 penalty
+✅ r_comm: 4 communication outage events
+✅ r_deadline: 0 deadline misses
+✅ r_mapf: 0 MAPF timeouts
+```
+
+**Key Design Decisions**:
+
+1. **Weight Selection**:
+   - Task completion: 1.0 (highest priority)
+   - Time penalty: -0.01 (moderate)
+   - Communication: -0.05 (medium)
+   - Deadline miss: -0.1 (high penalty)
+   - MAPF timeout: -0.2 (highest penalty)
+
+2. **Use Deltas (Δ) Instead of Absolute Values**:
+   - Only reward/penalize changes in current step
+   - Avoids cumulative effects
+   - Aligns with RL immediate feedback principle
+
+3. **Use worst_nc Communication Metric**:
+   - Consistent with Day8 comm_greedy
+   - Captures "UGV falling behind" problem
+   - Reflects weakest link communication quality
+
+4. **NaN/Inf Safety**:
+   - Automatic detection and replacement with 0.0
+   - Prevents environment crashes
+
+5. **Transparent Reward Components**:
+   - Return detailed breakdown in info dict
+   - Enables debugging and analysis
+   - Facilitates weight tuning
+
+**Alignment with Paper Objectives**:
+
+| Paper Objective | Reward Component | Alignment |
+|----------------|------------------|-----------|
+| tasks_completed ↑ | r_task (+1.0) | Direct reward |
+| deadline_miss_rate ↓ | r_deadline (-0.1) | Penalty for misses |
+| outage_worst_nc ↓ | r_comm (-0.05) | Penalty for outage |
+| Time efficiency | r_time (-0.01) | Encourage speed |
+| System stability | r_mapf (-0.2) | Penalty for failures |
+
+**Files Modified**:
+- `agcoop/env/core.py`:
+  - Added `_compute_reward()` method (after line 1278)
+  - Modified `step()` to record previous state and compute reward
+  - Added `reward_components` to info dict
+- `scripts/test_day9_step4_reward.py`: Validation script
+
+**Status**: ✅ COMPLETED
+
+**Next**: Day9 summary and Day10 planning
+
+---
+
+### Step 5: Gym Env Wrapper Implementation ✅
+
+**Goal**: Implement standard Gym interface wrapper (minimal intrusion to core.py)
+
+**Implementation**:
+
+Created `agcoop/rl/agcoop_gym_env.py` with `AGCoopGymEnv` class:
+
+```python
+class AGCoopGymEnv(gym.Env):
+    """
+    AGCoop Gym 环境包装类
+    
+    将 AGCoopEnv (core.py) 包装为标准 Gym 接口
+    """
+    
+    def __init__(self, config, ...):
+        # 创建 core 环境
+        self.core_env = AGCoopEnv(config, method="rl", planner="PIBT")
+        
+        # 设置 spaces
+        self.action_space = self.core_env.action_space
+        self.observation_space = self.core_env.observation_space
+    
+    def reset(self, seed=None, options=None):
+        # 设置随机种子
+        if seed is not None:
+            self.core_env.config['episode']['seed'] = seed
+            self.core_env.rng = np.random.RandomState(seed)
+        
+        # 调用 core reset
+        obs = self.core_env.reset()
+        info = {...}
+        return obs, info
+    
+    def step(self, action):
+        # 调用 core step
+        obs, reward, done, info = self.core_env.step(action)
+        
+        # 区分 terminated 和 truncated
+        terminated = False  # 任务完成（当前不使用）
+        truncated = done    # 到达 horizon
+        
+        return obs, reward, terminated, truncated, info
+    
+    def render(self, mode=None):
+        # Human 模式：打印状态
+        # RGB Array 模式：返回图像
+        ...
+```
+
+**Key Features**:
+
+1. **Minimal Intrusion**:
+   - Wraps existing `AGCoopEnv` without modifying core.py
+   - Directly uses core's `action_space` and `observation_space`
+   - Calls core's `reset()` and `step()` methods
+
+2. **Standard Gym Interface**:
+   - `reset(seed, options)` → `(obs, info)`
+   - `step(action)` → `(obs, reward, terminated, truncated, info)`
+   - `render(mode)` → `None` or `rgb_array`
+   - `close()` → cleanup
+
+3. **Gymnasium Compatibility**:
+   - Supports both gymnasium (5 return values) and gym (4 return values)
+   - Automatic detection and adaptation
+
+4. **Terminated vs Truncated**:
+   - `terminated=False`: No task completion termination (yet)
+   - `truncated=True`: Episode ends at horizon
+   - Follows gymnasium standard
+
+5. **Render Modes**:
+   - `human`: Print state to console
+   - `rgb_array`: Return placeholder image (480x640x3)
+   - Future: Integrate with visualizer
+
+**Validation Results**:
+
+*Import Test*:
+```
+✅ AGCoopGymEnv import successful
+```
+
+*Basic Interface Test*:
+```
+✅ Environment creation successful
+✅ Action space: MultiDiscrete([6, 13])
+✅ Observation space: Dict (5 keys)
+✅ reset() returns (obs, info)
+✅ step() returns (obs, reward, terminated, truncated, info)
+```
+
+*Long Run Test (1000 steps)*:
+```
+✅ Crash count: 0
+✅ Episode count: 2
+✅ Episode 1: 500 steps, total_reward = 19.10
+✅ Episode 2: 500 steps, total_reward = 15.50
+```
+
+*Termination Logic Test*:
+```
+✅ Episode ends at step 50 (horizon=50)
+✅ terminated: False
+✅ truncated: True
+✅ Logic correct (reaches horizon)
+```
+
+*Render Test*:
+```
+✅ human mode: prints state correctly
+✅ rgb_array mode: returns (480, 640, 3) image
+```
+
+**Usage Example**:
+
+```python
+from agcoop.rl import AGCoopGymEnv
+from agcoop.env.wrappers import FlattenObservation
+
+# Create environment
+base_env = AGCoopGymEnv(config)
+env = FlattenObservation(base_env)  # Optional: flatten for PPO
+
+# Run episode
+obs, info = env.reset(seed=42)
+
+for step in range(500):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    
+    if terminated or truncated:
+        break
+
+env.close()
+```
+
+**Stable-Baselines3 Compatibility**:
+
+```python
+from stable_baselines3 import PPO
+from agcoop.rl import AGCoopGymEnv
+from agcoop.env.wrappers import FlattenObservation
+
+env = FlattenObservation(AGCoopGymEnv(config))
+model = PPO("MlpPolicy", env, verbose=1)
+model.learn(total_timesteps=10000)
+```
+
+**Files Created**:
+- `agcoop/rl/__init__.py`: RL module initialization
+- `agcoop/rl/agcoop_gym_env.py`: AGCoopGymEnv class
+- `scripts/test_day9_step5_gym_env.py`: Validation script
+
+**Files NOT Modified**:
+- `agcoop/env/core.py`: Unchanged (minimal intrusion ✓)
+
+**Status**: ✅ COMPLETED
+
+---
+
+---
+
+---
+
+
+> **注意**: 最新的更新在文件开头！请从顶部开始阅读最新内容。
+
+---
+
+## Day9: RL Environment Design (IN PROGRESS) 🚧
+
+**Date**: 2026-02-09
+**Goal**: Convert current system to standard RL environment with stable `reset()`/`step()` interface
+
+### Overview
+
+Converting the Day8 closed-loop system into a standard RL environment to enable PPO training. The goal is to make the system "trainable" first, then optimize for performance.
+
+### Step 1: Freeze RL Control Points & Timing ✅
+
+**Goal**: Ensure RL actions only apply at decision steps (`t % K == 0`)
+
+**Implementation**:
+1. Added decision step detection in `step()`:
+   ```python
+   is_decision_step = (self.state.t % self.decision_period == 0)
+   ```
+
+2. Modified action application logic:
+   - Decision steps: Apply action and update goals
+   - Non-decision steps: Continue executing cached paths (receding horizon)
+
+3. Added info flags:
+   ```python
+   info = {
+       'decision_step': is_decision_step,
+       'action_applied': action_applied,
+       ...
+   }
+   ```
+
+**Validation Results**:
+```
+✅ Decision step count: 100/100 (K=5, steps=500)
+✅ Non-decision steps: 0 violations (action_applied=False)
+✅ Multiple K values tested: K∈{3,5,8,10} all pass
+```
+
+**Files Modified**:
+- `agcoop/env/core.py`: Modified `step()` function
+- `scripts/test_day9_step1_decision_timing.py`: Basic validation
+- `scripts/test_day9_step1_multiple_K.py`: Extended validation
+
+**Key Design**:
+- Consistent with Day6 receding horizon structure
+- Decision steps: t=0, K, 2K, 3K, ...
+- Non-decision steps: Execute cached MAPF paths
+
+---
+
+### Step 2: Design Action Space ✅
+
+**Goal**: Define minimal viable action space (先"可训"，再"聪明")
+
+**Action Space Design**:
+- Format: `MultiDiscrete([M+1, R+1])`
+- **task_choice** ∈ {0..M}:
+  - 0: Don't specify task (fallback to default)
+  - 1..M: Select from Top-M tasks (sorted by deadline)
+- **relay_target** ∈ {0..R}:
+  - 0: Don't specify relay (keep current)
+  - 1..R: Select from candidate relay points
+
+**Configuration**:
+- M = `config['tasks']['top_m']` (default: 5)
+- R = `config['rendezvous']['candidate_count']` (default: 12)
+- Default action space: `MultiDiscrete([6, 13])` (78 discrete options)
+
+**Implementation**:
+
+1. **Added `action_space` property**:
+   ```python
+   @property
+   def action_space(self):
+       return spaces.MultiDiscrete([self.top_m + 1, self.candidate_count + 1])
+   ```
+
+2. **Implemented `_apply_rl_action()` method**:
+   - Parse action: `[task_choice, relay_target]`
+   - Validate and clamp out-of-bounds indices
+   - Get Top-M tasks (sorted by deadline - EDF)
+   - Assign carrier UGV to selected task
+   - Assign non-carrier UGVs to selected relay point
+   - Return `(goals, action_valid, error_msg)`
+
+3. **Modified `step()` function**:
+   ```python
+   if is_decision_step:
+       if action is not None:
+           # RL strategy: apply action
+           goals, action_valid, action_error = self._apply_rl_action(action, current_positions)
+           action_applied = True
+       elif self.method in ["greedy", "coverage", "comm_greedy"]:
+           # Heuristic strategy
+           goals = self._compute_xxx_goals(current_positions)
+           action_applied = True
+   ```
+
+4. **Added RL controller initialization**:
+   ```python
+   elif self.method == "rl" and self.grid_map is not None:
+       self.ugv_controller = UGVGreedyController(K=K, grid_map=self.grid_map, connectivity=4)
+       self.ugv_controller.reset(starts, goals)
+   ```
+
+**Key Features**:
+- **High-level selection**: RL only decides "which task/relay", low-level pathfinding uses existing BFS/MAPF
+- **Safe fallback**: Out-of-bounds actions auto-clamped, invalid positions fallback to current position
+- **Information transparency**: `info` includes `action_valid` and `action_error`
+
+**Validation Results**:
+
+*Basic Test*:
+```
+✅ action_space.sample() works
+✅ Out-of-bounds actions auto-clamped
+✅ Random actions run 100 steps without crash
+```
+
+*Decision Step Test*:
+```
+✅ All decision steps apply action
+✅ Out-of-bounds actions handled correctly
+
+Test cases:
+  - [1, 1]: Select 1st task + 1st relay ✓
+  - [2, 3]: Select 2nd task + 3rd relay ✓
+  - [0, 5]: No task, only relay ✓
+  - [3, 0]: Only task, no relay ✓
+  - [10, 20]: Out-of-bounds (clamped to [5, 12]) ✓
+```
+
+**Files Modified**:
+- `agcoop/env/core.py`:
+  - Added `action_space` property
+  - Added `_apply_rl_action()` method
+  - Modified `step()` to support RL actions
+  - Added RL controller initialization in `reset()`
+- `scripts/test_day9_step2_action_space.py`: Basic validation
+- `scripts/test_day9_step2_decision_action.py`: Decision step validation
+
+**Action Space Examples** (M=5, R=12):
+- `[0, 0]`: Don't specify task/relay (keep default)
+- `[1, 5]`: Most urgent task + 5th relay point
+- `[3, 0]`: 3rd urgent task + no relay
+- `[0, 8]`: No task + 8th relay point
+
+**Key Design Decisions**:
+
+1. **Task Selection Strategy**: Top-M sorted by deadline (EDF - Earliest Deadline First)
+   ```python
+   active_tasks_sorted = sorted(active_tasks, key=lambda t: t.deadline)
+   top_m_tasks = active_tasks_sorted[:self.top_m]
+   ```
+
+2. **Goal Assignment**:
+   - Carrier UGV (ID=0): Assigned to selected task location
+   - Non-carrier UGVs (ID=1,2): Assigned to selected relay point
+
+3. **Safe Fallback**:
+   ```python
+   if task_choice < 0 or task_choice > self.top_m:
+       task_choice = np.clip(task_choice, 0, self.top_m)
+       action_valid = False
+   ```
+
+**Comparison with Day8 Heuristic**:
+
+| Dimension | Day8 Heuristic | Day9 RL |
+|-----------|----------------|---------|
+| Task selection | Greedy (nearest) | RL learns (Top-M) |
+| Relay selection | Coverage (fixed rules) | RL learns (candidates) |
+| Communication weight | Fixed λ | RL implicitly learns |
+| Adaptability | Fixed policy | Dynamic learning |
+
+**Status**: ✅ COMPLETED
+
+**Next**: Step 3 - Define observation space
+
+---
+
+
 > **注意**: 最新的更新在文件末尾！请从底部开始阅读最新内容。
 
 ---
@@ -5597,5 +6487,4 @@ Validation criteria from Day8 Step 5:
 - ⏸️ Step 6.3: Dual threshold testing - BLOCKED (need to fix Step 6.2 first)
 
 **Next**: Need user input on which approach to pursue.
-
 

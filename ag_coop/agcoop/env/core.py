@@ -189,6 +189,10 @@ class AGCoopEnv:
         # 决策周期
         self.decision_period = config['episode'].get('decision_period', 5)
 
+        # Day9 Step 2: Action space 配置
+        self.top_m = config['tasks'].get('top_m', 5)  # Top-M 任务数量
+        self.candidate_count = config.get('rendezvous', {}).get('candidate_count', 12)  # 候选点数量 R
+
         # 实验标识
         self.run_id = run_id
         self.method = method
@@ -218,12 +222,127 @@ class AGCoopEnv:
         self._current_outage_streak = 0
         self._max_outage_streak = 0
 
-    def reset(self) -> SystemState:
+        # Day9 Step 2: 初始化 action space（延迟到 reset 后才能确定实际的 M 和 R）
+        self._action_space = None
+
+        # Day9 Step 3: 初始化 observation space
+        self._observation_space = None
+
+    @property
+    def action_space(self):
+        """
+        Day9 Step 2: RL action space
+
+        返回 gym.spaces.MultiDiscrete([M+1, R+1])
+        - action[0]: task_choice ∈ {0..M}
+          - 0 表示"不指定任务"（退化为 greedy/默认策略）
+          - 1..M 表示从 Top-M 任务中选择第 i-1 个任务（索引从 0 开始）
+        - action[1]: relay_target ∈ {0..R}
+          - 0 表示"不指定 relay"（保持当前策略）
+          - 1..R 表示从候选点集合中选择第 i-1 个候选点（索引从 0 开始）
+
+        注意：实际的 M 和 R 在 reset() 后才能确定（取决于任务数量和候选点数量）
+        """
+        if self._action_space is None:
+            # 使用配置中的默认值
+            try:
+                from gymnasium import spaces
+            except ImportError:
+                from gym import spaces
+
+            # MultiDiscrete: [task_choice, relay_target]
+            # task_choice: 0..M (M+1 个选项)
+            # relay_target: 0..R (R+1 个选项)
+            self._action_space = spaces.MultiDiscrete([self.top_m + 1, self.candidate_count + 1])
+
+        return self._action_space
+
+    @property
+    def observation_space(self):
+        """
+        Day9 Step 3: RL observation space
+
+        返回 gym.spaces.Dict，包含：
+        - ugv_pos: shape (N, 2) - UGV 位置（grid 坐标，float32）
+        - uav_state: shape (3,) - [onboard_ugv_id, uav_mode, reserved]
+        - tasks_topM: shape (M, 4) - Top-M 任务 [x, y, deadline_normalized, available_flag]
+        - comm: shape (3,) - [snr_best_nc, outage_percent_worst_nc, best_ugv_id_nc]
+        - candidates_R: shape (R, 3) - 候选点 [x, y, dist_to_carrier]
+        """
+        if self._observation_space is None:
+            try:
+                from gymnasium import spaces
+            except ImportError:
+                from gym import spaces
+
+            N = self.n_ugv
+            M = self.top_m
+            R = self.candidate_count
+
+            # 地图尺寸（用于归一化）
+            if self.grid_map is not None:
+                map_w = float(self.grid_map.width)
+                map_h = float(self.grid_map.height)
+            else:
+                map_w = self.map_width
+                map_h = self.map_height
+
+            self._observation_space = spaces.Dict({
+                # UGV 位置：(N, 2) - 归一化到 [0, 1]
+                'ugv_pos': spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(N, 2),
+                    dtype=np.float32
+                ),
+
+                # UAV 状态：(3,) - [onboard_ugv_id, mode, reserved]
+                # onboard_ugv_id: 0..N-1 归一化到 [0, 1]
+                # mode: 0=ONBOARD, 1=OUTBOUND, 2=SERVICING, 3=INBOUND (归一化到 [0, 1])
+                # reserved: 占位，暂时为 0
+                'uav_state': spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(3,),
+                    dtype=np.float32
+                ),
+
+                # Top-M 任务：(M, 4) - [x, y, deadline_normalized, available_flag]
+                # x, y: 归一化到 [0, 1]
+                # deadline_normalized: (deadline - t) / horizon，归一化到 [0, 1]
+                # available_flag: 0 或 1
+                'tasks_topM': spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(M, 4),
+                    dtype=np.float32
+                ),
+
+                # 通信状态：(3,) - [snr_best_nc, outage_percent_worst_nc, best_ugv_id_nc]
+                # snr_best_nc: 归一化到 [0, 1]（假设 SNR 范围 0-40 dB）
+                # outage_percent_worst_nc: [0, 1]
+                # best_ugv_id_nc: 0..N-1 归一化到 [0, 1]
+                'comm': spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(3,),
+                    dtype=np.float32
+                ),
+
+                # 候选 relay 点：(R, 3) - [x, y, dist_to_carrier]
+                # x, y: 归一化到 [0, 1]
+                # dist_to_carrier: 归一化到 [0, 1]（假设最大距离为地图对角线）
+                'candidates_R': spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(R, 3),
+                    dtype=np.float32
+                ),
+            })
+
+        return self._observation_space
+
+    def reset(self) -> Dict[str, np.ndarray]:
         """
         重置环境到初始状态
 
         Returns:
-            初始系统状态
+            初始观测（Dict 格式）
         """
         # 重置随机数生成器（保证可复现）
         self.rng = np.random.RandomState(self.seed)
@@ -391,6 +510,26 @@ class AGCoopEnv:
 
             print(f"Comm-Greedy Controller 初始化: K={K}, λ={self.comm_lambda}, D0={self.comm_radius}")
 
+        elif self.method == "rl" and self.grid_map is not None:
+            # Day9 Step 2: RL Controller
+            # 使用与 greedy 相同的底层 controller，但目标由 RL action 决定
+            from agcoop.controllers import UGVGreedyController
+
+            K = self.decision_period
+            self.ugv_controller = UGVGreedyController(
+                K=K,
+                grid_map=self.grid_map,
+                connectivity=4
+            )
+
+            # 初始目标 = 起点（RL 在 step 时根据 action 动态更新目标）
+            goals = {i: starts[i] for i in starts}
+            self._init_starts = dict(starts)
+            self._init_goals = dict(goals)
+            self.ugv_controller.reset(starts, goals)
+
+            print(f"RL Controller 初始化: K={K}")
+
         elif self.mapf_enabled and self.grid_map is not None:
             from agcoop.mapf import UGVMAPFWrapper
             from agcoop.controllers import UGVRecedingHorizonMAPFController
@@ -504,24 +643,42 @@ class AGCoopEnv:
 
             print(f"任务目录生成: {len(self.task_catalog)} 个任务, hash={self.task_catalog.compute_hash()}")
 
-        return self.state
+        # Day9 Step 3: 返回初始观测
+        return self._get_observation()
 
-    def step(self, action: Optional[Any] = None) -> Tuple[SystemState, Dict[str, Any], bool, Dict[str, Any]]:
+    def step(self, action: Optional[Any] = None) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
         """
         执行一步环境演化
 
         Args:
-            action: 动作（Day1 不使用，占位）
+            action: 动作（可选）
+                - Day9: RL action 只在决策步 (t % K == 0) 生效
+                - 非决策步忽略 action，继续执行缓存的控制逻辑
 
         Returns:
-            (state, reward, done, info) 元组
-            - state: 新的系统状态
-            - reward: 奖励（Day1 占位，返回 0）
+            (obs, reward, done, info) 元组
+            - obs: 新的观测（Dict 格式）
+            - reward: 奖励（Day9 预留，返回 0.0）
             - done: 是否结束
             - info: 额外信息字典
+                - action_applied: bool，是否应用了 action
+                - decision_step: bool，是否为决策步
+                - action_valid: bool，action 是否有效
+                - action_error: str，action 错误信息
         """
         if self.state is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
+
+        # Day9 Step 1: 判断是否为决策步
+        is_decision_step = (self.state.t % self.decision_period == 0)
+        action_applied = False
+        action_valid = True  # Day9 Step 2: action 验证标志
+        action_error = ""    # Day9 Step 2: action 错误信息
+
+        # Day9 Step 4: 记录步前状态（用于 reward 计算）
+        prev_tasks_completed = self.state.tasks_completed
+        prev_deadline_miss = self.state.deadline_miss
+        prev_tardiness_sum = self.state.tardiness_sum
 
         # 记录步前 UGV 位置（用于计算 mean_step_motion）
         prev_ugv_positions = list(self.state.ugv_positions)
@@ -537,15 +694,30 @@ class AGCoopEnv:
                 cell = self.grid_map.world_to_cell(pos[0], pos[1])
                 current_positions[i] = cell
 
-            # Greedy/Coverage/Comm-Greedy: 在决策步更新目标
-            if self.method in ["greedy", "coverage", "comm_greedy"] and (self.state.t % self.decision_period == 0):
-                if self.method == "comm_greedy":
-                    # Day8 Step 6.3: 使用通信感知的目标选择
-                    goals = self._compute_comm_greedy_goals(current_positions)
+            # Day9 Step 1: 只在决策步更新目标
+            if is_decision_step:
+                # Day9 Step 2: 优先使用 RL action（如果提供）
+                if action is not None:
+                    # RL 策略：应用 action
+                    goals, action_valid, action_error = self._apply_rl_action(action, current_positions)
+                    action_applied = True
+                elif self.method in ["greedy", "coverage", "comm_greedy"]:
+                    # Heuristic 策略
+                    if self.method == "comm_greedy":
+                        # Day8 Step 6.3: 使用通信感知的目标选择
+                        goals = self._compute_comm_greedy_goals(current_positions)
+                    else:
+                        # Greedy 或 Coverage（带 relay）
+                        goals = self._compute_greedy_goals(current_positions)
+                    action_applied = True
                 else:
-                    # Greedy 或 Coverage（带 relay）
-                    goals = self._compute_greedy_goals(current_positions)
-                self.ugv_controller.set_goals(goals)
+                    # 其他方法或没有 action，保持当前位置
+                    goals = {i: current_positions[i] for i in range(self.n_ugv)}
+                    action_applied = False
+
+                # 设置目标
+                if action_applied:
+                    self.ugv_controller.set_goals(goals)
 
             # 尝试重规划（每 K 步）
             mapf_plan_info = self.ugv_controller.maybe_replan(
@@ -608,8 +780,25 @@ class AGCoopEnv:
         if done and self.enable_logging and self.metrics_logger:
             self._save_final_metrics()
 
+        # Day9 Step 4: 计算 reward
+        # 获取当前 outage_nc
+        current_outage_nc = getattr(self.state, '_current_outage_worst_nc', 0.0)
+
+        # 检查是否触发 MAPF timeout
+        mapf_timeout = False
+        if mapf_plan_info is not None:
+            mapf_timeout = (mapf_plan_info.called and not mapf_plan_info.success)
+
+        # 计算 reward
+        reward, reward_components = self._compute_reward(
+            prev_tasks_completed,
+            prev_deadline_miss,
+            prev_tardiness_sum,
+            current_outage_nc,
+            mapf_timeout
+        )
+
         # 构建返回信息
-        reward = 0.0  # Day1 占位
         info = {
             'timestep': self.state.t,
             'tasks_completed': self.state.tasks_completed,
@@ -617,6 +806,14 @@ class AGCoopEnv:
             'deadline_miss': self.state.deadline_miss,
             'tardiness_sum': self.state.tardiness_sum,
             'active_tasks': len(self.state.get_active_tasks()),
+            # Day9 Step 1: 决策步标志
+            'decision_step': is_decision_step,
+            'action_applied': action_applied,
+            # Day9 Step 2: action 验证信息
+            'action_valid': action_valid,
+            'action_error': action_error,
+            # Day9 Step 4: reward 组成部分
+            'reward_components': reward_components,
         }
 
         # 添加 MAPF 信息（如果有）
@@ -625,7 +822,9 @@ class AGCoopEnv:
             info['mapf_success'] = mapf_plan_info.success
             info['mapf_plan_time_ms'] = mapf_plan_info.plan_time_ms
 
-        return self.state, reward, done, info
+        # Day9 Step 3: 返回观测而不是状态
+        obs = self._get_observation()
+        return obs, reward, done, info
 
     def _generate_tasks(self) -> None:
         """
@@ -868,6 +1067,300 @@ class AGCoopEnv:
 
         return goals
 
+    def _apply_rl_action(
+        self,
+        action: Any,
+        current_positions: dict
+    ) -> Tuple[dict, bool, str]:
+        """
+        Day9 Step 2: 应用 RL action 并返回 UGV 目标
+
+        Args:
+            action: RL action，格式为 [task_choice, relay_target]
+                - task_choice ∈ {0..M}: 0=不指定，1..M=选择 Top-M 中的第 i-1 个任务
+                - relay_target ∈ {0..R}: 0=不指定，1..R=选择候选点中的第 i-1 个
+
+        Returns:
+            (goals, action_valid, error_msg) 元组
+            - goals: {agent_id: (i, j)} 目标 cell 坐标
+            - action_valid: action 是否有效
+            - error_msg: 如果无效，错误信息
+        """
+        # 解析 action
+        try:
+            if isinstance(action, (list, tuple, np.ndarray)):
+                task_choice = int(action[0])
+                relay_target = int(action[1])
+            else:
+                return {}, False, f"Invalid action format: {type(action)}"
+        except (IndexError, ValueError, TypeError) as e:
+            return {}, False, f"Failed to parse action: {e}"
+
+        # 验证 action 范围
+        if task_choice < 0 or task_choice > self.top_m:
+            task_choice = np.clip(task_choice, 0, self.top_m)
+            error_msg = f"task_choice out of range, clamped to {task_choice}"
+        else:
+            error_msg = ""
+
+        if relay_target < 0 or relay_target > self.candidate_count:
+            relay_target = np.clip(relay_target, 0, self.candidate_count)
+            if error_msg:
+                error_msg += f"; relay_target out of range, clamped to {relay_target}"
+            else:
+                error_msg = f"relay_target out of range, clamped to {relay_target}"
+
+        # 获取活跃任务（Top-M）
+        active_tasks = self.state.get_active_tasks()
+
+        # 按 deadline 排序（EDF - Earliest Deadline First）
+        active_tasks_sorted = sorted(active_tasks, key=lambda t: t.deadline)
+        top_m_tasks = active_tasks_sorted[:self.top_m]
+
+        # 初始化目标字典
+        goals = {}
+        carrier_id = self.config['ugv'].get('carrier_id', 0)
+
+        # 1. 处理 task_choice（为 carrier UGV 分配任务目标）
+        if task_choice > 0 and task_choice <= len(top_m_tasks):
+            # 选择了一个任务
+            selected_task = top_m_tasks[task_choice - 1]  # 索引从 0 开始
+            task_cell = self.grid_map.world_to_cell(
+                selected_task.position[0], selected_task.position[1]
+            )
+
+            # 验证任务位置是否可通行
+            ti, tj = task_cell
+            if 0 <= ti < self.grid_map.height and 0 <= tj < self.grid_map.width:
+                if self.grid_map.is_free(ti, tj):
+                    goals[carrier_id] = task_cell
+                else:
+                    if error_msg:
+                        error_msg += f"; selected task at {task_cell} is not free"
+                    else:
+                        error_msg = f"selected task at {task_cell} is not free"
+            else:
+                if error_msg:
+                    error_msg += f"; selected task at {task_cell} is out of bounds"
+                else:
+                    error_msg = f"selected task at {task_cell} is out of bounds"
+
+        # 如果 task_choice=0 或任务无效，carrier 保持当前位置
+        if carrier_id not in goals:
+            goals[carrier_id] = current_positions[carrier_id]
+
+        # 2. 处理 relay_target（为非 carrier UGV 分配 relay 目标）
+        if relay_target > 0 and relay_target <= len(self.candidate_relays):
+            # 选择了一个 relay 候选点
+            selected_relay = self.candidate_relays[relay_target - 1]  # 索引从 0 开始
+
+            # 为所有非 carrier UGV 分配这个 relay 目标
+            for i in range(self.n_ugv):
+                if i != carrier_id:
+                    goals[i] = selected_relay
+        else:
+            # relay_target=0 或无效，非 carrier UGV 保持当前位置
+            for i in range(self.n_ugv):
+                if i != carrier_id and i not in goals:
+                    goals[i] = current_positions[i]
+
+        # 验证所有 UGV 都有目标
+        for i in range(self.n_ugv):
+            if i not in goals:
+                goals[i] = current_positions[i]
+
+        action_valid = (error_msg == "")
+        return goals, action_valid, error_msg
+
+    def _get_observation(self) -> Dict[str, np.ndarray]:
+        """
+        Day9 Step 3: 获取当前观测
+
+        Returns:
+            Dict 格式的观测，包含：
+            - ugv_pos: (N, 2) - UGV 位置（归一化）
+            - uav_state: (3,) - [onboard_ugv_id, mode, reserved]
+            - tasks_topM: (M, 4) - Top-M 任务 [x, y, deadline_norm, available]
+            - comm: (3,) - [snr_best_nc, outage_worst_nc, best_ugv_id_nc]
+            - candidates_R: (R, 3) - 候选点 [x, y, dist_to_carrier]
+        """
+        N = self.n_ugv
+        M = self.top_m
+        R = self.candidate_count
+
+        # 地图尺寸（用于归一化）
+        if self.grid_map is not None:
+            map_w = float(self.grid_map.width)
+            map_h = float(self.grid_map.height)
+        else:
+            map_w = self.map_width
+            map_h = self.map_height
+
+        # 最大距离（地图对角线）
+        max_dist = np.sqrt(map_w**2 + map_h**2)
+
+        # 1. UGV 位置：(N, 2) - 归一化到 [0, 1]
+        ugv_pos = np.zeros((N, 2), dtype=np.float32)
+        for i, pos in enumerate(self.state.ugv_positions):
+            if self.grid_map is not None:
+                # 转换为 grid 坐标
+                cell = self.grid_map.world_to_cell(pos[0], pos[1])
+                ugv_pos[i, 0] = cell[1] / map_w  # x (列)
+                ugv_pos[i, 1] = cell[0] / map_h  # y (行)
+            else:
+                # 直接使用世界坐标归一化
+                ugv_pos[i, 0] = pos[0] / map_w
+                ugv_pos[i, 1] = pos[1] / map_h
+
+        # 2. UAV 状态：(3,) - [onboard_ugv_id, mode, reserved]
+        uav_state = np.zeros(3, dtype=np.float32)
+        uav_state[0] = self.state.uav_onboard_ugv_id / max(1.0, float(N - 1))  # 归一化到 [0, 1]
+
+        # UAV mode（如果有的话）
+        if hasattr(self.state, 'uav_mode'):
+            # 假设 mode: 0=ONBOARD, 1=OUTBOUND, 2=SERVICING, 3=INBOUND
+            uav_state[1] = getattr(self.state, 'uav_mode', 0) / 3.0  # 归一化到 [0, 1]
+        else:
+            uav_state[1] = 0.0  # 默认 ONBOARD
+
+        uav_state[2] = 0.0  # reserved
+
+        # 3. Top-M 任务：(M, 4) - [x, y, deadline_norm, available]
+        tasks_topM = np.zeros((M, 4), dtype=np.float32)
+
+        active_tasks = self.state.get_active_tasks()
+        active_tasks_sorted = sorted(active_tasks, key=lambda t: t.deadline)
+        top_m_tasks = active_tasks_sorted[:M]
+
+        for i, task in enumerate(top_m_tasks):
+            if self.grid_map is not None:
+                cell = self.grid_map.world_to_cell(task.position[0], task.position[1])
+                tasks_topM[i, 0] = cell[1] / map_w  # x
+                tasks_topM[i, 1] = cell[0] / map_h  # y
+            else:
+                tasks_topM[i, 0] = task.position[0] / map_w
+                tasks_topM[i, 1] = task.position[1] / map_h
+
+            # deadline 归一化：(deadline - t) / horizon
+            remaining_time = max(0, task.deadline - self.state.t)
+            tasks_topM[i, 2] = remaining_time / max(1.0, float(self.horizon_steps))
+            tasks_topM[i, 3] = 1.0  # available flag
+
+        # 如果任务不足 M 个，剩余位置填充 0（表示无任务）
+        # available_flag = 0 表示该位置无任务
+
+        # 4. 通信状态：(3,) - [snr_best_nc, outage_worst_nc, best_ugv_id_nc]
+        comm = np.zeros(3, dtype=np.float32)
+
+        # SNR 归一化到 [0, 1]（假设范围 0-40 dB）
+        snr_best_nc = getattr(self.state, '_current_snr_best_nc', 0.0)
+        comm[0] = np.clip(snr_best_nc / 40.0, 0.0, 1.0)
+
+        # Outage percentage（已经是 [0, 1]）
+        comm[1] = getattr(self.state, '_current_outage_worst_nc', 0.0)
+
+        # Best UGV ID（归一化）
+        best_ugv_id = getattr(self.state, '_current_best_ugv_id_nc', 0)
+        comm[2] = best_ugv_id / max(1.0, float(N - 1))
+
+        # 5. 候选 relay 点：(R, 3) - [x, y, dist_to_carrier]
+        candidates_R = np.zeros((R, 3), dtype=np.float32)
+
+        carrier_id = self.config['ugv'].get('carrier_id', 0)
+        carrier_pos = self.state.ugv_positions[carrier_id]
+
+        if self.grid_map is not None:
+            carrier_cell = self.grid_map.world_to_cell(carrier_pos[0], carrier_pos[1])
+        else:
+            carrier_cell = (carrier_pos[1], carrier_pos[0])  # (row, col)
+
+        for i, candidate in enumerate(self.candidate_relays[:R]):
+            # 候选点位置归一化
+            candidates_R[i, 0] = candidate[1] / map_w  # x (列)
+            candidates_R[i, 1] = candidate[0] / map_h  # y (行)
+
+            # 到 carrier 的距离（归一化）
+            dist = np.sqrt((candidate[0] - carrier_cell[0])**2 + (candidate[1] - carrier_cell[1])**2)
+            candidates_R[i, 2] = dist / max_dist
+
+        # 返回观测字典
+        obs = {
+            'ugv_pos': ugv_pos,
+            'uav_state': uav_state,
+            'tasks_topM': tasks_topM,
+            'comm': comm,
+            'candidates_R': candidates_R,
+        }
+
+        # 验证没有 NaN/Inf
+        for key, value in obs.items():
+            if not np.all(np.isfinite(value)):
+                print(f"Warning: obs['{key}'] contains NaN/Inf, replacing with 0")
+                obs[key] = np.nan_to_num(value, nan=0.0, posinf=1.0, neginf=0.0)
+
+        return obs
+
+    def _compute_reward(
+        self,
+        prev_tasks_completed: int,
+        prev_deadline_miss: int,
+        prev_tardiness_sum: int,
+        current_outage_nc: float,
+        mapf_timeout: bool
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Day9 Step 4: 计算 reward
+
+        Reward 组成：
+        1. +1.0 × Δtasks_completed（本步新完成的任务数）
+        2. -0.01（每步时间惩罚）
+        3. -0.05 × outage_nc（通信 outage 惩罚）
+        4. -0.1 × Δdeadline_miss（截止时间错过惩罚）
+        5. -0.2 × mapf_timeout（MAPF 超时惩罚）
+
+        Args:
+            prev_tasks_completed: 上一步的 tasks_completed
+            prev_deadline_miss: 上一步的 deadline_miss
+            prev_tardiness_sum: 上一步的 tardiness_sum（预留，暂不使用）
+            current_outage_nc: 当前步的 outage_nc（[0, 1]）
+            mapf_timeout: 当前步是否触发 MAPF timeout
+
+        Returns:
+            (total_reward, reward_components) 元组
+            - total_reward: 总奖励
+            - reward_components: 各组成部分的字典
+        """
+        # 计算增量
+        delta_tasks = self.state.tasks_completed - prev_tasks_completed
+        delta_miss = self.state.deadline_miss - prev_deadline_miss
+
+        # 各组成部分
+        r_task = 1.0 * delta_tasks
+        r_time = -0.01
+        r_comm = -0.05 * current_outage_nc
+        r_deadline = -0.1 * delta_miss
+        r_mapf = -0.2 if mapf_timeout else 0.0
+
+        # 总奖励
+        total_reward = r_task + r_time + r_comm + r_deadline + r_mapf
+
+        # 验证 reward 是 finite
+        if not np.isfinite(total_reward):
+            print(f"Warning: reward is not finite: {total_reward}, replacing with 0.0")
+            total_reward = 0.0
+
+        # 返回总奖励和各组成部分
+        reward_components = {
+            'r_task': float(r_task),
+            'r_time': float(r_time),
+            'r_comm': float(r_comm),
+            'r_deadline': float(r_deadline),
+            'r_mapf': float(r_mapf),
+            'r_total': float(total_reward),
+        }
+
+        return total_reward, reward_components
+
     def _compute_compactness(self, positions: dict) -> float:
         """
         计算编队紧凑性（平均两两距离）
@@ -1029,7 +1522,7 @@ class AGCoopEnv:
 
     def get_metrics(self) -> Dict[str, Any]:
         """
-        获取当前累计指标
+        获取当前累计指标（包括派生指标）
 
         Returns:
             指标字典
@@ -1037,13 +1530,88 @@ class AGCoopEnv:
         if self.state is None:
             return {}
 
+        # 基础计数
+        steps = self.state.t
+        tasks_completed = self.state.tasks_completed
+        total_tasks = len(self.state.task_pool)
+        active_tasks = len(self.state.get_active_tasks())
+        outage_steps = self.state.outage_steps
+        deadline_miss = self.state.deadline_miss
+        tardiness_sum = self.state.tardiness_sum
+
+        # 计算派生指标（与 _save_final_metrics 保持一致）
+        completion_rate = (tasks_completed / total_tasks * 100) if total_tasks > 0 else 0.0
+        deadline_miss_rate = (deadline_miss / tasks_completed * 100) if tasks_completed > 0 else 0.0
+        mean_tardiness = (tardiness_sum / deadline_miss) if deadline_miss > 0 else 0.0
+
+        # 通信指标
+        outage_percent = (outage_steps / steps * 100) if steps > 0 else 0.0
+        snr_best_mean = (self.state.snr_sum / steps) if steps > 0 else 0.0
+        snr_best_min = self.state.snr_min if self.state.snr_min != float('inf') else 0.0
+
+        # Non-carrier 通信指标
+        outage_steps_nc = getattr(self.state, 'outage_steps_nc', 0)
+        snr_sum_nc = getattr(self.state, 'snr_sum_nc', 0.0)
+        snr_min_nc = getattr(self.state, 'snr_min_nc', float('inf'))
+
+        outage_percent_nc = (outage_steps_nc / steps * 100) if steps > 0 else 0.0
+        snr_best_nc_mean = (snr_sum_nc / steps) if steps > 0 else 0.0
+        snr_best_nc_min = snr_min_nc if snr_min_nc != float('inf') else 0.0
+
+        # Worst_nc 通信指标（编队连通性）
+        outage_steps_worst_nc = getattr(self.state, 'outage_steps_worst_nc', 0)
+        snr_sum_worst_nc = getattr(self.state, 'snr_sum_worst_nc', 0.0)
+        snr_min_worst_nc = getattr(self.state, 'snr_min_worst_nc', float('inf'))
+
+        outage_percent_worst_nc = (outage_steps_worst_nc / steps * 100) if steps > 0 else 0.0
+        snr_worst_nc_mean = (snr_sum_worst_nc / steps) if steps > 0 else 0.0
+        snr_worst_nc_min = snr_min_worst_nc if snr_min_worst_nc != float('inf') else 0.0
+
+        # MAPF 统计
+        mapf_stats = {}
+        if self.ugv_controller is not None:
+            mapf_stats = self.ugv_controller.get_stats()
+
         return {
-            'tasks_completed': self.state.tasks_completed,
-            'outage_steps': self.state.outage_steps,
-            'deadline_miss': self.state.deadline_miss,
-            'tardiness_sum': self.state.tardiness_sum,
-            'total_tasks': len(self.state.task_pool),
-            'active_tasks': len(self.state.get_active_tasks()),
+            # 基础计数
+            'tasks_completed': tasks_completed,
+            'total_tasks': total_tasks,
+            'active_tasks': active_tasks,
+            'deadline_miss': deadline_miss,
+            'tardiness_sum': tardiness_sum,
+            'outage_steps': outage_steps,
+
+            # 派生指标
+            'completion_rate': round(completion_rate, 2),
+            'deadline_miss_rate': round(deadline_miss_rate, 2),
+            'mean_tardiness': round(mean_tardiness, 2),
+
+            # 通信指标
+            'outage_percent': round(outage_percent, 2),
+            'snr_best_mean': round(snr_best_mean, 2),
+            'snr_best_min': round(snr_best_min, 2),
+
+            # Non-carrier 通信指标
+            'outage_steps_nc': outage_steps_nc,
+            'outage_percent_nc': round(outage_percent_nc, 2),
+            'snr_best_nc_mean': round(snr_best_nc_mean, 2),
+            'snr_best_nc_min': round(snr_best_nc_min, 2),
+
+            # Worst_nc 通信指标
+            'outage_steps_worst_nc': outage_steps_worst_nc,
+            'outage_percent_worst_nc': round(outage_percent_worst_nc, 2),
+            'snr_worst_nc_mean': round(snr_worst_nc_mean, 2),
+            'snr_worst_nc_min': round(snr_worst_nc_min, 2),
+
+            # MAPF 统计
+            'mapf_calls': mapf_stats.get('mapf_calls', 0),
+            'mapf_success': mapf_stats.get('mapf_success_calls', 0),
+            'mapf_timeout': mapf_stats.get('mapf_timeout_calls', 0),
+            'mapf_success_rate': round(
+                (mapf_stats.get('mapf_success_calls', 0) / mapf_stats.get('mapf_calls', 1) * 100)
+                if mapf_stats.get('mapf_calls', 0) > 0 else 0.0,
+                2
+            ),
         }
 
     def render(self) -> str:
