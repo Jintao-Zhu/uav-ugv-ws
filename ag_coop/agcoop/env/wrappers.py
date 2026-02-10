@@ -8,12 +8,16 @@ import numpy as np
 from typing import Dict, Any, Tuple
 
 try:
+    import gymnasium as gym
     from gymnasium import spaces
+    from gymnasium.core import Wrapper
 except ImportError:
+    import gym
     from gym import spaces
+    from gym.core import Wrapper
 
 
-class FlattenObservation:
+class FlattenObservation(Wrapper):
     """
     将 Dict 格式的观测展平为单一的 Box 向量
 
@@ -27,7 +31,7 @@ class FlattenObservation:
         Args:
             env: 原始环境（observation_space 必须是 Dict）
         """
-        self.env = env
+        super().__init__(env)
 
         # 验证原始 observation space 是 Dict
         if not isinstance(env.observation_space, spaces.Dict):
@@ -47,9 +51,6 @@ class FlattenObservation:
             shape=(total_size,),
             dtype=np.float32
         )
-
-        # 保留原始 action space
-        self.action_space = env.action_space
 
         print(f"FlattenObservation: {self._obs_keys} -> Box({total_size},)")
         for key in self._obs_keys:
@@ -75,21 +76,21 @@ class FlattenObservation:
 
     def reset(self, **kwargs):
         """重置环境并展平观测"""
-        obs_dict = self.env.reset(**kwargs)
-        return self._flatten_obs(obs_dict)
+        obs_dict, info = self.env.reset(**kwargs)
+        return self._flatten_obs(obs_dict), info
 
     def step(self, action):
         """执行一步并展平观测"""
-        obs_dict, reward, done, info = self.env.step(action)
+        obs_dict, reward, terminated, truncated, info = self.env.step(action)
         obs_flat = self._flatten_obs(obs_dict)
 
         # 在 info 中保留原始 Dict 观测（用于调试）
         info['obs_dict'] = obs_dict
 
-        return obs_flat, reward, done, info
+        return obs_flat, reward, terminated, truncated, info
 
 
-class NormalizeReward:
+class NormalizeReward(Wrapper):
     """
     归一化奖励（可选，Day10 使用）
 
@@ -105,17 +106,13 @@ class NormalizeReward:
             gamma: 折扣因子
             epsilon: 数值稳定性常数
         """
-        self.env = env
+        super().__init__(env)
         self.gamma = gamma
         self.epsilon = epsilon
         self.returns = 0.0
         self.return_mean = 0.0
         self.return_var = 1.0
         self.count = 0
-
-        # 保留原始 spaces
-        self.observation_space = env.observation_space
-        self.action_space = env.action_space
 
     def reset(self, **kwargs):
         """重置环境"""
@@ -124,7 +121,7 @@ class NormalizeReward:
 
     def step(self, action):
         """执行一步并归一化奖励"""
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
 
         # 更新 return 统计
         self.returns = self.returns * self.gamma + reward
@@ -143,4 +140,4 @@ class NormalizeReward:
         info['reward_raw'] = reward
         info['reward_normalized'] = normalized_reward
 
-        return obs, normalized_reward, done, info
+        return obs, normalized_reward, terminated, truncated, info
