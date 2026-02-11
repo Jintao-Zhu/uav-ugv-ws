@@ -4,6 +4,81 @@
 
 ---
 
+## Day12: Nav2 导航准备 + WSL 优化
+
+**Date**: 2026-02-12
+**Status**: 🔧 **进行中**
+**Goal**: 为 TurtleBot3 配置 Nav2 自主导航（顶点导航 + 雷达避障），同时优化 WSL 开发环境
+
+### WSL 环境优化
+
+1. **WSL 资源分配**：在 `C:\Users\zjt20\.wslconfig` 中可配置 `memory`、`swap` 等参数，`memory` 为上限而非预分配，建议配合 `autoMemoryReclaim=gradual` 使用
+2. **WSLg GUI 修复**：长时间运行后 Gazebo GUI 可能无法显示，添加 `fix-gui` alias 到 `.bashrc`，可快速重启图形服务；也可通过运行 `xclock &` 触发 WSLg 恢复
+3. **ROS 2 日志过滤**：CycloneDDS 的 `Failed to parse type hash` warning 是 PX4 XRCE-DDS agent 兼容性问题，无害但无法通过 `RCUTILS_LOGGING_SEVERITY_THRESHOLD` 过滤（因为是 RMW 层直接输出），可用 `2>/dev/null` 或 `2>&1 | grep -v "Failed to parse type hash"` 过滤
+
+### Nav2 导航准备
+
+1. **Nav2 已安装**：`ros-jazzy-navigation2` + `ros-jazzy-nav2-bringup` 已就绪
+2. **TF 树修复**：原 `spawn_turtlebot.launch.py` 缺少 TF 发布，导致 TF 树为空。修复内容：
+   - 添加 `robot_state_publisher`（读取 TurtleBot3 URDF，发布静态 TF）
+   - 桥接 `/tf` 话题（`gz.msgs.Pose_V` → `tf2_msgs/msg/TFMessage`）
+   - 桥接 `/joint_states` 话题
+3. **TF 树验证通过**：
+   ```
+   odom → base_footprint → base_link → base_scan
+                                      → wheel_left_link
+                                      → wheel_right_link
+                                      → caster_back_link
+                                      → imu_link
+   ```
+
+### 待完成
+
+- [ ] 选择建图方案（SLAM 建图 vs 无地图模式）
+- [ ] 编写 Nav2 参数配置文件（nav2_params.yaml）
+- [ ] 创建 Nav2 导航 launch 文件
+- [ ] 测试顶点导航 + 实时避障功能
+
+---
+
+## WSL2 Vulkan GPU 加速修复 ✅
+
+**Date**: 2026-02-11
+**Status**: ✅ **完成**
+**Goal**: 修复 WSL2 中 Vulkan 使用 CPU 软件渲染（llvmpipe）的问题，使其走 GPU
+
+### 问题现象
+
+- OpenGL 已正常使用 GPU（D3D12 → RTX 4060）
+- Vulkan 仍是 CPU 渲染（llvmpipe），`vulkaninfo` 显示 `driverName = llvmpipe`
+
+### 根因分析
+
+1. **Ubuntu 24.04 的 `mesa-vulkan-drivers` 未编译 `dzn` (Dozen) 驱动** — Dozen 是 Mesa 的 Vulkan-on-D3D12 转译层，是 WSL2 中 Vulkan 走 GPU 的关键。系统中有 `libd3d12.so`，但缺少 `libvulkan_dzn.so`
+2. **`.bashrc` 中残留 `LIBGL_ALWAYS_SOFTWARE=1`**（第 142 行），虽然后面又改回 0，但不够干净
+3. **其他 Mesa Vulkan ICD（nouveau、virtio、gfxstream 等）初始化失败**，干扰 Vulkan loader
+
+### 修复步骤
+
+1. 删除 `.bashrc` 中多余的 `LIBGL_ALWAYS_SOFTWARE=1`
+2. 添加 kisak PPA（`ppa:kisak/kisak-mesa`），安装 Mesa 25.3.5（包含 dzn 驱动）
+3. 在 `.bashrc` 中添加 `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/dzn_icd.json`，指定只加载 dzn
+
+### 修复结果
+
+```
+GPU0:
+    deviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+    deviceName = Microsoft Direct3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)
+    driverName = Dozen
+    driverInfo = Mesa 25.3.5 - kisak-mesa PPA
+```
+
+- ✅ OpenGL — GPU（D3D12 → RTX 4060）
+- ✅ Vulkan — GPU（Dozen/D3D12 → RTX 4060）
+
+---
+
 ## Day11: PX4 + TurtleBot3 Gazebo 联合仿真 ✅
 
 **Date**: 2026-02-11
