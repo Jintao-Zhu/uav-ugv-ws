@@ -1,0 +1,8 @@
+# 第三方大型仓库，不纳入版本控制
+PX4-Autopilot/
+Micro-XRCE-DDS-Agent/
+
+# ROS2 build artifacts
+uav_ugv_ws/build/
+uav_ugv_ws/install/
+uav_ugv_ws/log/

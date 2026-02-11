@@ -1,4 +1,546 @@
-下面给出一个**三周（21 天）内“必能完成”的实验规划**。核心原则是：**先把 Layer-1（Python 离散主实验）做成“跑就出曲线”的闭环**；RL 作为增益项，但即使 RL 训练效果一般，也通过 **“Heuristic + Imitation 兜底”** 保证实验一定产出。Gazebo（Layer-2）只做少量复现验证，严格限范围，避免工程爆炸。
+# UAV-UGV 协同系统操作指南
+
+本文档提供完整的系统操作说明，包括环境配置、训练、评估、可视化等所有操作。
+
+---
+
+## 📋 目录
+
+1. [快速开始](#快速开始)
+2. [环境配置](#环境配置)
+3. [系统运行](#系统运行)
+4. [RL 训练](#rl-训练)
+5. [策略评估](#策略评估)
+6. [可视化](#可视化)
+7. [实验复现](#实验复现)
+8. [常用工具](#常用工具)
+
+---
+
+## 快速开始
+
+### 最小运行示例
+
+```bash
+# 1. 进入工作目录
+cd ag_coop
+
+# 2. 运行单个 episode（使用默认配置）
+python scripts/run_one_episode.py --seed 0
+
+# 3. 查看输出
+ls outputs/
+```
+
+### 核心文件结构
+
+```
+ag_coop/
+├── agcoop/                    # 核心代码
+│   ├── env/                   # 环境实现
+│   │   ├── core.py           # 主环境类
+│   │   └── wrappers.py       # Gym 包装器
+│   ├── rl/                    # RL 相关
+│   │   └── callbacks.py      # 训练回调
+│   ├── robots/                # 机器人控制器
+│   ├── tasks/                 # 任务管理
+│   ├── comm/                  # 通信模型
+│   └── mapf/                  # MAPF 规划
+├── configs/                   # 配置文件
+│   ├── default.yaml          # 默认配置
+│   └── day10_ppo_train.yaml  # PPO 训练配置
+├── scripts/                   # 可执行脚本
+├── maps/                      # 地图文件
+└── outputs/                   # 输出目录
+```
+
+---
+
+## 环境配置
+
+### 依赖安装
+
+```bash
+# Python 环境（推荐 Python 3.10）
+pip install numpy scipy pyyaml
+pip install stable-baselines3 gymnasium
+pip install matplotlib seaborn pandas
+
+# MAPF 求解器（CBS）
+# 确保 libMultiRobotPlanning.so 在系统路径中
+```
+
+### 配置文件说明
+
+主配置文件：`configs/default.yaml`
+
+```yaml
+episode:
+  horizon_steps: 500          # Episode 长度
+  decision_period: 5          # 决策周期 K
+  map_path: "maps/map_01.map" # 地图路径
+  seed: 0                     # 随机种子
+
+robots:
+  n_ugv: 3                    # UGV 数量
+  n_uav: 1                    # UAV 数量
+
+tasks:
+  arrival_rate: 0.1           # 任务到达率
+  deadline_min: 25            # 最小 deadline
+  deadline_max: 60            # 最大 deadline
+
+comm:
+  enabled: true               # 启用通信模型
+  obstacle_penalty_db: 6.0    # 遮挡惩罚
+
+mapf:
+  enabled: false              # 是否启用 MAPF
+  time_budget_ms: 300         # MAPF 时间预算
+```
+
+---
+
+## 系统运行
+
+### 1. 运行单个 Episode
+
+```bash
+# 基础运行
+python scripts/run_one_episode.py --seed 0
+
+# 指定配置文件
+python scripts/run_one_episode.py \
+    --config configs/default.yaml \
+    --seed 42
+
+# 指定输出目录
+python scripts/run_one_episode.py \
+    --seed 0 \
+    --out_dir outputs/test_run
+```
+
+**输出文件**：
+- `metrics.json` - 性能指标
+- `trace.jsonl` - 完整轨迹（可选）
+- `config_resolved.yaml` - 解析后的配置
+
+### 2. 运行 Baseline 对比
+
+```bash
+# Day8 通信 baseline 对比（Greedy vs Coverage）
+python scripts/run_day8_comm_baselines.py
+
+# 输出：outputs/day8_comm_baselines/
+#   - greedy_results.json
+#   - coverage_results.json
+#   - comparison.json
+```
+
+### 3. 批量实验（Sweep）
+
+```bash
+# 任务负载扫描
+python scripts/sweep_task_load.py \
+    --map maps/map_01.map \
+    --loads 0.05 0.1 0.15 0.2 \
+    --seeds 5 \
+    --out_dir outputs/load_sweep
+
+# 通信阈值扫描
+python scripts/sweep_threshold.py \
+    --thresholds -12 -9 -6 -3 \
+    --seeds 5
+```
+
+---
+
+## RL 训练
+
+### 1. PPO 训练（Day10 配置）
+
+```bash
+# 使用 Day10 配置训练
+python scripts/day10_train_ppo.py \
+    --config configs/day10_ppo_train.yaml \
+    --out_dir outputs/day10_ppo
+
+# 自定义训练参数
+python scripts/day10_train_ppo.py \
+    --config configs/day10_ppo_train.yaml \
+    --total_timesteps 1000000 \
+    --n_envs 8 \
+    --learning_rate 0.0003 \
+    --out_dir outputs/ppo_1m
+```
+
+**训练配置关键参数**：
+```yaml
+training:
+  total_timesteps: 100000     # 总训练步数
+  n_envs: 4                   # 并行环境数
+  batch_size: 256             # Batch size
+  n_steps: 64                 # 每环境步数 (batch_size / n_envs)
+  learning_rate: 0.0003       # 学习率
+  eval_freq: 2500             # 评估频率
+  eval_episodes: 5            # 评估 episode 数
+```
+
+**训练输出**：
+```
+outputs/day10_ppo/
+├── checkpoints/              # 模型检查点
+│   ├── best_model.zip       # 最佳模型
+│   └── rl_model_50000_steps.zip
+├── eval_logs/                # 评估日志
+│   ├── eval_0.json
+│   └── eval_2500.json
+├── tb/                       # TensorBoard 日志
+├── config_resolved.yaml      # 训练配置
+└── training_summary.json     # 训练总结
+```
+
+### 2. 监控训练进度
+
+```bash
+# 启动 TensorBoard
+tensorboard --logdir outputs/day10_ppo/tb --port 6006
+
+# 浏览器访问
+# http://localhost:6006
+```
+
+**关键指标**：
+- `rollout/ep_rew_mean` - 平均 episode 奖励
+- `train/loss` - 训练损失
+- `eval/mean_reward` - 评估平均奖励
+- `eval/tasks_completed` - 完成任务数
+- `eval/deadline_miss` - Deadline miss 数
+
+### 3. 恢复训练
+
+```bash
+# 从检查点恢复
+python scripts/day10_train_ppo.py \
+    --config configs/day10_ppo_train.yaml \
+    --resume outputs/day10_ppo/checkpoints/rl_model_50000_steps.zip \
+    --total_timesteps 200000
+```
+
+---
+
+## 策略评估
+
+### 1. 评估训练好的 PPO 策略
+
+```bash
+# 使用 Day10 对比脚本
+python scripts/day10_step5_compare_policies.py \
+    --model outputs/day10_ppo/checkpoints/best_model.zip \
+    --config configs/day10_ppo_train.yaml \
+    --seeds 10000 10001 10002 10003 10004 \
+    --out_dir outputs/ppo_eval
+
+# 输出：
+#   - ppo_policy_results.json
+#   - random_policy_results.json
+#   - comparison_results.json
+```
+
+### 2. 多策略对比
+
+```bash
+# Day8 最终对比（10 seeds）
+python scripts/day8_10seed_compare.py \
+    --map maps/map_01.map \
+    --seeds 10 \
+    --out_dir outputs/day8_10seed
+
+# 输出对比表格和统计
+```
+
+### 3. 评估指标说明
+
+**核心指标**：
+- `total_reward` - 总奖励
+- `tasks_completed` - 完成任务数
+- `deadline_miss` - Deadline miss 数
+- `deadline_miss_rate` - Miss 率 (%)
+- `outage_steps` - 通信中断步数
+- `outage_percent` - 中断百分比 (%)
+
+**Reward 分量**：
+- `reward_task` - 任务完成奖励 (+1.0 per task)
+- `reward_time` - 时间惩罚 (-0.01 per step)
+- `reward_comm` - 通信惩罚 (-0.05 per outage step)
+- `reward_deadline` - Deadline 惩罚 (-0.1 per miss)
+- `reward_mapf` - MAPF 超时惩罚 (-0.2 per timeout)
+
+---
+
+## 可视化
+
+### 1. 轨迹可视化
+
+```bash
+# 可视化单个 episode
+python scripts/visualize.py \
+    --trace outputs/test_run/trace.jsonl \
+    --map maps/map_01.map \
+    --out_dir outputs/viz
+
+# 生成动画（需要 ffmpeg）
+python scripts/visualize.py \
+    --trace outputs/test_run/trace.jsonl \
+    --map maps/map_01.map \
+    --animate \
+    --fps 10 \
+    --out outputs/animation.mp4
+```
+
+**可视化内容**：
+- UGV/UAV 轨迹
+- 任务位置和状态
+- 通信连接（SNR 热力图）
+- 候选中继点
+- 时间轴
+
+### 2. 性能曲线绘制
+
+```bash
+# 绘制 tradeoff 曲线
+python scripts/plot_tradeoff_curves.py \
+    --results outputs/load_sweep/results.csv \
+    --out_dir outputs/figures
+
+# 生成图表：
+#   - throughput_vs_load.png
+#   - miss_rate_vs_load.png
+#   - outage_vs_load.png
+```
+
+### 3. 通信分析
+
+```bash
+# 检查通信质量
+python scripts/inspect_comm.py \
+    --trace outputs/test_run/trace.jsonl \
+    --map maps/map_01.map
+
+# 扩展通信分析
+python scripts/inspect_comm_extended.py \
+    --trace outputs/test_run/trace.jsonl \
+    --out_dir outputs/comm_analysis
+```
+
+---
+
+## 实验复现
+
+### Day10 PPO 训练完整复现
+
+```bash
+# Step 1: 训练 PPO（100k 步，~2 分钟）
+python scripts/day10_train_ppo.py \
+    --config configs/day10_ppo_train.yaml \
+    --out_dir outputs/day10_ppo_reproduce
+
+# Step 2: 评估策略（5 个固定种子）
+python scripts/day10_step5_compare_policies.py \
+    --model outputs/day10_ppo_reproduce/checkpoints/best_model.zip \
+    --config configs/day10_ppo_train.yaml \
+    --seeds 10000 10001 10002 10003 10004 \
+    --out_dir outputs/day10_eval_reproduce
+
+# Step 3: 验证结果
+python scripts/verify_day10_delivery.py \
+    --eval_dir outputs/day10_eval_reproduce
+
+# 预期结果：
+# - PPO mean reward: ~22.24 (±3.99)
+# - Random mean reward: ~10.62 (±5.35)
+# - Improvement: +109.42%
+```
+
+### 验证交付包
+
+```bash
+# 验证 Day10 交付包完整性
+python scripts/verify_day10_delivery.py \
+    --package outputs/day10_ppo_summary
+
+# 检查项：
+# ✅ 配置文件存在且一致
+# ✅ 模型文件存在
+# ✅ 评估结果完整
+# ✅ Metrics 非零且合理
+# ✅ 文档完整
+```
+
+---
+
+## 常用工具
+
+### 1. 配置检查
+
+```bash
+# 打印解析后的配置
+python scripts/print_config.py \
+    --config configs/day10_ppo_train.yaml
+
+# 检查配置一致性
+python scripts/test_catalog_consistency.py
+```
+
+### 2. 地图工具
+
+```bash
+# 检查地图信息
+python scripts/inspect_map.py \
+    --map maps/map_01.map
+
+# 输出：
+#   - 地图尺寸
+#   - 障碍物数量
+#   - 自由格子数
+#   - 连通性
+
+# 生成候选中继点
+python scripts/gen_candidates.py \
+    --map maps/map_01.map \
+    --count 12 \
+    --out candidates.json
+```
+
+### 3. 碰撞检测
+
+```bash
+# 检查轨迹碰撞
+python scripts/check_collisions.py \
+    --trace outputs/test_run/trace.jsonl
+
+# 调试碰撞
+python scripts/debug_collision.py \
+    --trace outputs/test_run/trace.jsonl \
+    --timestep 150
+```
+
+### 4. 输出验证
+
+```bash
+# 验证输出完整性
+python scripts/validate_output_integrity.py \
+    --out_dir outputs/test_run
+
+# 验证 Day6 输出格式
+python scripts/validate_day6_outputs.py \
+    --out_dir outputs/day6_test
+```
+
+---
+
+## 常见问题
+
+### Q1: 训练时 reward 不收敛？
+
+**检查项**：
+1. 学习率是否合适（推荐 3e-4）
+2. Batch size 和 n_steps 是否匹配（batch_size = n_steps × n_envs）
+3. Reward 权重是否合理（task: 1.0, comm: 0.05, deadline: 0.1）
+4. 环境是否稳定（检查 NaN/Inf）
+
+```bash
+# 检查训练日志
+grep "NaN\|Inf" outputs/day10_ppo/training.log
+
+# 降低学习率重试
+python scripts/day10_train_ppo.py \
+    --learning_rate 0.0001
+```
+
+### Q2: MAPF 频繁超时？
+
+**解决方案**：
+1. 增加时间预算：`time_budget_ms: 500`
+2. 减少 horizon：`H: 40`
+3. 暂时禁用 MAPF：`mapf.enabled: false`
+
+### Q3: 通信 outage 过高？
+
+**调整参数**：
+```yaml
+comm:
+  obstacle_penalty_db: 6.0    # 降低遮挡惩罚（原 10.0）
+  snr_threshold_db: -9.0      # 降低 SNR 阈值（原 -6.0）
+```
+
+### Q4: 如何加速训练？
+
+```bash
+# 增加并行环境
+python scripts/day10_train_ppo.py \
+    --n_envs 8  # 原 4
+
+# 减少评估频率
+python scripts/day10_train_ppo.py \
+    --eval_freq 5000  # 原 2500
+
+# 使用更小的地图
+# 修改 configs/day10_ppo_train.yaml:
+#   map_path: "maps/test_small.map"
+```
+
+---
+
+## 性能基准
+
+### 硬件配置
+
+- CPU: Intel i7 或同等性能
+- RAM: 16 GB
+- GPU: 不需要（CPU 训练即可）
+
+### 运行时间参考
+
+| 任务 | 时间 | 说明 |
+|------|------|------|
+| 单 episode (500 步) | ~1-2 秒 | 不启用 MAPF |
+| 单 episode (500 步) | ~3-5 秒 | 启用 MAPF |
+| PPO 训练 (100k 步) | ~2 分钟 | 4 并行环境 |
+| PPO 训练 (1M 步) | ~20 分钟 | 4 并行环境 |
+| 评估 (5 episodes) | ~10 秒 | 固定种子 |
+
+---
+
+## 引用和文档
+
+### 相关文档
+
+- [DEVLOG.md](DEVLOG.md) - 完整开发日志
+- [DAY10_SUMMARY.md](DAY10_SUMMARY.md) - Day10 总结
+- [outputs/day10_ppo_summary/README.md](outputs/day10_ppo_summary/README.md) - 交付包说明
+
+### 核心论文
+
+- PPO: Schulman et al., "Proximal Policy Optimization Algorithms", 2017
+- CBS (MAPF): Sharon et al., "Conflict-Based Search For Optimal Multi-Agent Path Finding", 2012
+
+---
+
+## 联系和支持
+
+如有问题，请查看：
+1. [DEVLOG.md](DEVLOG.md) - 详细实现记录
+2. [outputs/day10_ppo_summary/summary.md](outputs/day10_ppo_summary/summary.md) - 实验结果
+3. GitHub Issues（如果有）
+
+---
+
+---
+
+# 三周实验规划（原文档）
+
+下面给出一个**三周（21 天）内"必能完成"的实验规划**。核心原则是：**先把 Layer-1（Python 离散主实验）做成"跑就出曲线"的闭环**；RL 作为增益项，但即使 RL 训练效果一般，也通过 **"Heuristic + Imitation 兜底"** 保证实验一定产出。Gazebo（Layer-2）只做少量复现验证，严格限范围，避免工程爆炸。
 
 ---
 

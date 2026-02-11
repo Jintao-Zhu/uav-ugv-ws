@@ -4,6 +4,104 @@
 
 ---
 
+## Day11: PX4 + TurtleBot3 Gazebo 联合仿真 ✅
+
+**Date**: 2026-02-11
+**Status**: ✅ **完成**
+**Goal**: 在 Gazebo 中实现 UAV (PX4 x500) 空中环绕 + UGV (TurtleBot3 Burger) 地面环绕的联合演示
+
+### 🎯 Day11 进度总结
+
+**目标**: 搭建 ROS2 Jazzy + PX4 v1.17 + TurtleBot3 的联合仿真环境，实现 UAV 和 UGV 同时做圆周运动
+
+**已完成步骤**:
+1. ✅ 创建 `uav_ugv_bringup` ROS2 包，包含 launch 文件和控制脚本
+2. ✅ 解决 ROS2 Jazzy + PX4 XRCE-DDS 通信兼容性问题
+3. ✅ 实现 UAV offboard 圆周飞行控制
+4. ✅ 诊断并修复 TurtleBot3 不响应 cmd_vel 的问题
+5. ✅ UAV + UGV 联合演示成功运行
+
+---
+
+### 问题1: ROS2 Jazzy 无法接收 PX4 消息
+
+**现象**: `circle_demo` 节点无法收到 `/fmu/out/vehicle_status_v1` 等 PX4 topic 的消息
+
+**根因**: ROS2 Jazzy 默认使用 FastRTPS，其严格的 type hash 校验会静默丢弃 XRCE-DDS Agent 发布的消息（因为 Agent 不携带 type hash）
+
+**解决方案**: 切换 DDS 中间件为 CycloneDDS
+```bash
+# ~/.bashrc
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# 安装
+sudo apt install ros-jazzy-rmw-cyclonedds-cpp
+```
+同时在 `bringup_all.launch.py` 中通过 `SetEnvironmentVariable` 确保子进程也使用 CycloneDDS。
+
+### 问题2: PX4 v1.17 Topic 名变更
+
+PX4 v1.17 的 topic 名带 `_v1` 后缀：
+- `/fmu/out/vehicle_status_v1`（非 `/fmu/out/vehicle_status`）
+- `/fmu/out/vehicle_local_position_v1`（非 `/fmu/out/vehicle_local_position`）
+
+### 问题3: TurtleBot3 在 Gazebo 中不动 ⭐
+
+**现象**: `circle_demo` 日志显示 `UGV: Starting circle`，`ros2 topic hz` 确认 cmd_vel 以 10Hz 发布，但小车在 Gazebo 中纹丝不动
+
+**诊断过程**:
+1. 确认 `ros_gz_bridge` 进程在运行，且使用 CycloneDDS（排除 RMW 不匹配）
+2. 通过 `gz topic -i -t /model/turtlebot3_burger/cmd_vel` 发现 Gazebo 侧该 topic **没有订阅者**
+3. 检查 TurtleBot3 SDF 模型中 DiffDrive 插件配置：`<topic>cmd_vel</topic>`
+4. 通过 `gz topic -i -t /odom` 确认 DiffDrive 插件正常运行（在 `/odom` 上有发布者）
+
+**根因**: Gazebo Harmonic 中 DiffDrive 插件的 `<topic>cmd_vel</topic>` 被解析为 **`/cmd_vel`**（无模型前缀），但 `ros_gz_bridge` 桥接的是 `/model/turtlebot3_burger/cmd_vel`。两个 topic 名不匹配，导致 bridge 发布的消息 DiffDrive 收不到。
+
+**解决方案**: 修改 bridge 配置和 circle_demo，使用不带模型前缀的 topic 名：
+```python
+# spawn_turtlebot.launch.py - bridge 参数
+'/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+'/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+'/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+
+# circle_demo.py - UGV publisher
+self.ugv_cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+```
+
+### 关键文件
+
+| 文件 | 说明 |
+|------|------|
+| `uav_ugv_ws/src/uav_ugv_bringup/launch/bringup_all.launch.py` | 主 launch 文件（PX4 SITL + DDS Agent + TurtleBot3） |
+| `uav_ugv_ws/src/uav_ugv_bringup/launch/spawn_turtlebot.launch.py` | TurtleBot3 spawn + ros_gz_bridge |
+| `uav_ugv_ws/src/uav_ugv_bringup/uav_ugv_bringup/circle_demo.py` | UAV offboard 环绕 + UGV 地面环绕控制脚本 |
+
+### 运行方式
+
+```bash
+# Terminal 1 - PX4 SITL
+cd PX4-Autopilot && make px4_sitl gz_x500
+# PX4 shell 中:
+param set COM_RCL_EXCEPT 4
+param set NAV_RCL_ACT 0
+param set NAV_DLL_ACT 0
+
+# Terminal 2 - DDS Agent
+MicroXRCEAgent udp4 -p 8888
+
+# Terminal 3 - Demo
+source uav_ugv_ws/install/setup.bash
+ros2 run uav_ugv_bringup circle_demo
+```
+
+### 经验教训
+
+1. **Gazebo Harmonic 的 topic 命名规则**: SDF 插件中的相对 topic 名不一定会加模型前缀，需要通过 `gz topic -l` 和 `gz topic -i` 实际验证
+2. **ros_gz_bridge 调试方法**: 分别在 ROS2 侧（`ros2 topic hz`）和 Gazebo 侧（`gz topic -e`）验证消息是否到达，可以快速定位桥接断点
+3. **ROS2 Jazzy + XRCE-DDS**: 必须使用 CycloneDDS，FastRTPS 的 type hash 校验会导致静默丢包
+
+---
+
 ## Day10: PPO Training Integration ✅
 
 **Date**: 2026-02-09
