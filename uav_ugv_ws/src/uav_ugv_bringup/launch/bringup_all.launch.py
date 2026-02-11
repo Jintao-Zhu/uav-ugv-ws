@@ -14,14 +14,26 @@ def generate_launch_description():
         os.path.dirname(__file__), 'spawn_turtlebot.launch.py'
     )
 
-    # 1. 启动 PX4 SITL (gz_x500)
-    px4_sitl = ExecuteProcess(
-        cmd=[
-            'bash', '-c',
-            f'cd {px4_dir} && make px4_sitl gz_x500'
-        ],
-        output='screen',
-        name='px4_sitl'
+    # 0. 预热 Gazebo（首次启动时初始化资源缓存，跑1步后自动退出）
+    gz_warmup = ExecuteProcess(
+        cmd=['gz', 'sim', '-s', '--iterations', '1'],
+        output='log',
+        name='gz_warmup'
+    )
+
+    # 1. 启动 PX4 SITL (gz_x500)（延迟 3 秒，等预热完成）
+    px4_sitl = TimerAction(
+        period=3.0,
+        actions=[
+            ExecuteProcess(
+                cmd=[
+                    'bash', '-c',
+                    f'cd {px4_dir} && make px4_sitl gz_x500'
+                ],
+                output='screen',
+                name='px4_sitl'
+            )
+        ]
     )
 
     # 2. 启动 Micro-XRCE-DDS-Agent（延迟 5 秒，等 PX4 先起来）
@@ -48,6 +60,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         set_rmw,
+        gz_warmup,
         px4_sitl,
         dds_agent,
         spawn_turtlebot,
