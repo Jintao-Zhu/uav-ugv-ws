@@ -4,10 +4,106 @@
 
 ---
 
+## Day14: PX4 ROS 2 通信要点
+
+**Date**: 2026-02-12
+
+### 发现：ros2 topic pub 无法控制 PX4 ⭐
+
+**现象**: 用 `ros2 topic pub --once /fmu/in/vehicle_command ...` 发送 ARM/TAKEOFF 命令，PX4 无反应。
+
+**根因**: QoS 不匹配。PX4 XRCE-DDS 端使用 `BEST_EFFORT` + `TRANSIENT_LOCAL`，而 `ros2 topic pub` 默认用 `RELIABLE`，消息送不到 PX4。
+
+**正确做法**: 必须用 Python 节点，手动设置 QoS：
+
+```python
+px4_qos = QoSProfile(
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
+```
+
+### 其他要点
+
+- 新版 PX4 的 `out` 话题带 `_v1` 后缀（如 `vehicle_status_v1`、`vehicle_local_position_v1`）
+- 起飞用 Offboard 模式：先持续发 setpoint 10 次 → 切 offboard + ARM → 发目标位置
+- `timestamp` 字段必须填（微秒），不能为 0
+- 参考实现：`circle_demo.py`
+
+---
+
+## Day13: 多机 UGV 独立控制
+
+**Date**: 2026-02-12
+**Status**: ✅ **完成**
+**Goal**: 3 台 TurtleBot3 在 Gazebo 中独立响应各自的 cmd_vel
+
+### 问题：3 台 UGV 无法独立控制 ⭐
+
+**现象**: 发送 `/tb3_0/cmd_vel` 时小车不动；发送 `/cmd_vel` 时 3 台车一起动。
+
+**诊断过程**:
+1. 确认桥接方向正确（`]` = ROS2→GZ，`[` = GZ→ROS2）
+2. `gz topic -i -t /tb3_0/cmd_vel` 显示有 Gazebo 订阅者，但直接 `gz topic -p` 发消息小车不动
+3. `gz topic -i -t /cmd_vel` 显示 3 个订阅者（3 个 DiffDrive 插件）
+4. 发送到 `/cmd_vel` 后 3 台车一起动 → 确认 DiffDrive 只订阅全局话题
+
+**根因**: Gazebo Harmonic 的 DiffDrive 插件把 SDF 中的 `<topic>cmd_vel</topic>` 解析为全局 `/cmd_vel`，**不会**自动加模型名前缀（即使用 `-name tb3_0` 生成）。虽然 `gz topic -l` 会显示 `/tb3_0/cmd_vel`，但 DiffDrive 实际只订阅 `/cmd_vel`。3 台车共享同一个 `/cmd_vel`，无法独立控制。
+
+**解决方案**: 在 `spawn_turtlebot.launch.py` 中动态修改 SDF：
+1. 读取原始 SDF 模板文件
+2. 用 `str.replace()` 把话题名替换为绝对路径（`cmd_vel` → `/{name}/cmd_vel`）
+3. 用 `-string` 参数（而非 `-file`）传给 `ros_gz_sim create`
+
+```python
+def make_robot_sdf(sdf_template: str, name: str) -> str:
+    sdf = sdf_template
+    sdf = sdf.replace('<topic>cmd_vel</topic>', f'<topic>/{name}/cmd_vel</topic>')
+    sdf = sdf.replace('<odom_topic>odom</odom_topic>', f'<odom_topic>/{name}/odom</odom_topic>')
+    sdf = sdf.replace('<frame_id>odom</frame_id>', f'<frame_id>{name}/odom</frame_id>')
+    sdf = sdf.replace('<child_frame_id>base_footprint</child_frame_id>',
+                       f'<child_frame_id>{name}/base_footprint</child_frame_id>')
+    sdf = sdf.replace('<topic>joint_states</topic>', f'<topic>/{name}/joint_states</topic>')
+    sdf = sdf.replace('<topic>scan</topic>', f'<topic>/{name}/scan</topic>')
+    sdf = sdf.replace('<gz_frame_id>base_scan</gz_frame_id>',
+                       f'<gz_frame_id>{name}/base_scan</gz_frame_id>')
+    return sdf
+```
+
+**替换的话题/frame 汇总**:
+
+| SDF 原始值 | 替换后（以 tb3_0 为例） | 说明 |
+|---|---|---|
+| `<topic>cmd_vel</topic>` | `/{name}/cmd_vel` | DiffDrive 速度指令 |
+| `<odom_topic>odom</odom_topic>` | `/{name}/odom` | DiffDrive 里程计 |
+| `<frame_id>odom</frame_id>` | `{name}/odom` | TF frame（无 `/`） |
+| `<child_frame_id>base_footprint</child_frame_id>` | `{name}/base_footprint` | TF frame（无 `/`） |
+| `<topic>joint_states</topic>` | `/{name}/joint_states` | 关节状态 |
+| `<topic>scan</topic>` | `/{name}/scan` | 激光雷达 |
+| `<gz_frame_id>base_scan</gz_frame_id>` | `{name}/base_scan` | 雷达 frame |
+
+**ros_gz_bridge 方向速查**:
+- `]` = ROS2→Gazebo（bridge 在 ROS2 侧订阅，发布到 Gazebo）→ 用于 cmd_vel
+- `[` = Gazebo→ROS2（bridge 在 Gazebo 侧订阅，发布到 ROS2）→ 用于 scan/odom/tf/joint_states
+
+### 经验教训
+
+1. **Gazebo Harmonic 话题命名**: SDF 插件中的相对话题名不会加模型前缀，多机场景必须手动改为绝对路径
+2. **`gz topic -l` 会误导**: 它会显示 `/tb3_0/cmd_vel` 存在，但 DiffDrive 实际订阅的是 `/cmd_vel`。要用 `gz topic -i -t /cmd_vel` 查看真正的订阅者
+3. **调试顺序**: 先在 Gazebo 侧直接 `gz topic -p` 测试，排除桥接问题后再查 SDF 插件配置
+
+### 修改文件
+
+- `uav_ugv_bringup/launch/spawn_turtlebot.launch.py` — 动态 SDF 话题替换 + `-string` 生成 + 桥接方向修正
+
+---
+
 ## Day12: Nav2 导航准备 + WSL 优化
 
 **Date**: 2026-02-12
-**Status**: 🔧 **进行中**
+**Status**: ✅ **完成**
 **Goal**: 为 TurtleBot3 配置 Nav2 自主导航（顶点导航 + 雷达避障），同时优化 WSL 开发环境
 
 ### WSL 环境优化
@@ -16,7 +112,7 @@
 2. **WSLg GUI 修复**：长时间运行后 Gazebo GUI 可能无法显示，添加 `fix-gui` alias 到 `.bashrc`，可快速重启图形服务；也可通过运行 `xclock &` 触发 WSLg 恢复
 3. **ROS 2 日志过滤**：CycloneDDS 的 `Failed to parse type hash` warning 是 PX4 XRCE-DDS agent 兼容性问题，无害但无法通过 `RCUTILS_LOGGING_SEVERITY_THRESHOLD` 过滤（因为是 RMW 层直接输出），可用 `2>/dev/null` 或 `2>&1 | grep -v "Failed to parse type hash"` 过滤
 
-### Nav2 导航准备
+### Nav2 导航配置
 
 1. **Nav2 已安装**：`ros-jazzy-navigation2` + `ros-jazzy-nav2-bringup` 已就绪
 2. **TF 树修复**：原 `spawn_turtlebot.launch.py` 缺少 TF 发布，导致 TF 树为空。修复内容：
@@ -31,13 +127,68 @@
                                       → caster_back_link
                                       → imu_link
    ```
+4. **Nav2 参数配置** (`nav2_params.yaml`)：
+   - 全局规划器：NavfnPlanner（Dijkstra）
+   - 局部规划器：DWB（Dynamic Window Approach）
+   - Costmap：Global 10x10m rolling window，Local 3x3m
+   - Recovery behaviors：spin, backup, drive_on_heading, wait
+   - Smoother server：SimpleSmoother（路径平滑）
+5. **Nav2 Launch 文件** (`nav2_simple_launch.py`)：
+   - 精简版，只启动 5 个核心节点（controller, planner, behavior, bt_navigator, smoother_server）
+   - 所有节点成功激活到 `active [3]` 状态
 
-### 待完成
+### 关键问题修复
 
-- [ ] 选择建图方案（SLAM 建图 vs 无地图模式）
-- [ ] 编写 Nav2 参数配置文件（nav2_params.yaml）
-- [ ] 创建 Nav2 导航 launch 文件
-- [ ] 测试顶点导航 + 实时避障功能
+#### 问题1: 小车不动（路径规划正常但无运动）
+**现象**: RViz 中能看到规划路径，但 Gazebo 中小车不移动
+**根因**: `velocity_smoother` 的 remapping 链路断裂 — controller_server 输出到 `cmd_vel_nav`，velocity_smoother 应该订阅 `cmd_vel_nav` 并输出到 `cmd_vel`，但 velocity_smoother 不是 lifecycle node，没被 lifecycle manager 激活，导致 `/cmd_vel` 有 0 个 publisher
+**解决方案**: 移除 velocity_smoother，让 controller_server 直接发布到 `/cmd_vel`，Gazebo bridge 直接接收
+
+#### 问题2: /clock 未桥接
+**现象**: `ros2 topic hz` 超时，Nav2 节点时间不同步
+**根因**: `spawn_turtlebot.launch.py` 的 `ros_gz_bridge` 参数中缺少 `/clock` 桥接，所有 `use_sim_time: true` 的节点无法获取仿真时间
+**解决方案**: 在 bridge arguments 中添加 `/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock`
+
+#### 问题3: 墙角卡住
+**现象**: 小车在墙角容易陷入局部最优，停止不动
+**调参**:
+- `min_vel_x`: 0.0 → -0.1（允许后退，使 backup recovery 生效）
+- `BaseObstacle.scale`: 0.02 → 0.08（增强障碍物回避权重）
+- `sim_time`: 1.7 → 2.0（增大前瞻时间）
+- `required_movement_radius`: 0.5 → 0.3（更快检测卡住）
+- `movement_time_allowance`: 10s → 5s（更快触发 recovery）
+- `inflation_radius`: 0.55 → 0.75（增大膨胀半径，远离墙壁）
+- `cost_scaling_factor`: 3.0 → 2.5（代价衰减更慢）
+
+### Step 1 验收：仿真时间与频率对齐 ✅
+
+| 话题 | 频率 | 状态 |
+|------|------|------|
+| `/clock` | ~250 Hz | ✅ Gazebo 时钟桥接正常 |
+| `/odom` (TB3) | ~50 Hz | ✅ 里程计稳定 |
+| `/scan` (TB3) | ~5 Hz | ✅ 激光雷达正常 |
+| `/fmu/out/vehicle_odometry` (PX4) | ~58 Hz | ✅ 需 BEST_EFFORT QoS |
+| `/fmu/out/sensor_combined` (PX4) | ~57 Hz | ✅ 需 BEST_EFFORT QoS |
+
+**重要发现**: PX4 话题的 QoS 为 `BEST_EFFORT` + `TRANSIENT_LOCAL`，默认 ROS 2 订阅（`RELIABLE`）无法接收数据。订阅 PX4 话题时必须匹配 QoS：
+```python
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+px4_qos = QoSProfile(
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1
+)
+```
+
+### 修改的文件
+
+- `uav_ugv_bringup/config/nav2_params.yaml` — Nav2 完整参数配置
+- `uav_ugv_bringup/launch/nav2_simple_launch.py` — 精简 Nav2 launch（5 节点）
+- `uav_ugv_bringup/launch/nav2_launch.py` — 完整 Nav2 launch（使用 nav2_bringup）
+- `uav_ugv_bringup/launch/spawn_turtlebot.launch.py` — 添加 /clock 桥接
+- `uav_ugv_bringup/setup.py` — 添加 launch/config 文件安装规则
+- `~/.bashrc` — 添加 fix-gui alias、日志过滤、CycloneDDS 配置
 
 ---
 

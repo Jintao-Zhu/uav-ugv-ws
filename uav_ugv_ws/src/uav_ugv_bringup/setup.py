@@ -17,6 +17,8 @@ setup(
         # 【关键修改】添加这一段，安装 launch 文件
         # 意思是：把 launch 目录下的所有 .py 文件，拷贝到安装目录的 share/包名/launch 下
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.py'))),
+        (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*.yaml'))),
+        (os.path.join('share', package_name, 'models', 'x500_lite'), glob(os.path.join('models', 'x500_lite', '*.sdf'))),
         # ---------------------------------------------------------
     ],
     install_requires=['setuptools'],
