@@ -1,143 +1,172 @@
-# UAV-UGV 协同系统
+<div align="center">
 
-基于通信约束和任务流的 UAV-UGV 协同路径规划与任务分配系统，集成 ROS 2 Jazzy + Gazebo Harmonic + PX4 SITL 仿真环境。
+# 🚁 UAV-UGV Cooperative System
 
-## 项目概述
+**Communication-Constrained Multi-Robot Task Planning and Coordination**
 
-本项目实现了一个多机器人协同系统，包含：
-- **UAV（无人机）**：PX4 x500 四旋翼，负责执行动态生成的任务
-- **UGV（地面车）**：TurtleBot3 Burger，作为通信中继节点，支持 UAV 与基站通信
-- **任务流**：动态生成的时间敏感任务（带 deadline）
-- **通信模型**：基于距离和障碍物的 SNR 计算
-- **仿真环境**：Gazebo Harmonic 物理仿真 + ROS 2 Jazzy 通信框架
-- **导航系统**：Nav2 自主导航（全局规划 + 局部避障）
+[![ROS 2](https://img.shields.io/badge/ROS_2-Jazzy-blue.svg)](https://docs.ros.org/en/jazzy/index.html)
+[![Gazebo](https://img.shields.io/badge/Gazebo-Harmonic-orange.svg)](https://gazebosim.org/)
+[![PX4](https://img.shields.io/badge/PX4-v1.17-green.svg)](https://px4.io/)
+[![Python](https://img.shields.io/badge/Python-3.12+-yellow.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-red.svg)](LICENSE)
 
-## 项目结构
+[Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Citation](#-citation)
+
+<img src="https://via.placeholder.com/800x400/1a1a1a/ffffff?text=UAV-UGV+Cooperative+System+Demo" alt="System Demo" width="800"/>
+
+</div>
+
+---
+
+## 📋 Overview
+
+This project implements a **multi-robot cooperative system** for communication-constrained task planning, featuring:
+
+- **Heterogeneous Robots**: PX4 x500 quadrotor (UAV) for task execution + TurtleBot3 Burger (UGV) as communication relay
+- **Dynamic Task Stream**: Time-sensitive tasks with deadlines and Bernoulli arrival process
+- **Communication Model**: SNR-based connectivity with distance attenuation and obstacle penalties
+- **Autonomous Navigation**: Nav2 stack with global planning (Dijkstra) and local obstacle avoidance (DWB)
+- **High-Fidelity Simulation**: Gazebo Harmonic physics + ROS 2 Jazzy middleware + PX4 SITL
+- **RL Environment**: Gymnasium-compatible environment with PPO baseline (Stable-Baselines3)
+
+### 🎯 Key Capabilities
+
+| Component | Description |
+|-----------|-------------|
+| **Task Planning** | EDF scheduling, Top-M task selection, deadline-aware execution |
+| **Communication** | SNR calculation, outage detection, relay-based connectivity |
+| **Multi-Robot Control** | Independent control of multiple UGVs with dynamic SDF generation |
+| **Path Planning** | Nav2 integration with recovery behaviors (backup, spin, wait) |
+| **RL Training** | PPO agent training with communication-aware reward shaping |
+
+---
+
+## 🏗️ System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Gazebo Harmonic Simulator                    │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │  PX4 x500    │  │ TurtleBot3   │  │ TurtleBot3   │  ...     │
+│  │  (UAV)       │  │ (UGV #0)     │  │ (UGV #1)     │          │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
+└─────────┼──────────────────┼──────────────────┼─────────────────┘
+          │                  │                  │
+          │ XRCE-DDS         │ ros_gz_bridge    │
+          ▼                  ▼                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         ROS 2 Jazzy                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ PX4 Offboard │  │ Nav2 Stack   │  │ Task Manager │          │
+│  │ Controller   │  │ (per UGV)    │  │ (Python)     │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+└─────────────────────────────────────────────────────────────────┘
+          │                  │                  │
+          └──────────────────┴──────────────────┘
+                             │
+                             ▼
+                  ┌──────────────────────┐
+                  │  RL Agent (PPO)      │
+                  │  Gymnasium Env       │
+                  └──────────────────────┘
+```
+
+---
+
+## 📁 Repository Structure
 
 ```
 uav-ugv-ws/
-├── ag_coop/                      # 任务规划核心代码（Python）
+├── 📦 ag_coop/                          # Task planning core (Python)
 │   ├── agcoop/
-│   │   ├── map/                  # 地图加载与处理
-│   │   ├── comm/                 # 通信模型（SNR 计算）
-│   │   ├── tasks/                # 任务系统
-│   │   └── env/                  # RL 环境（Gymnasium）
-│   ├── configs/                  # 配置文件
-│   ├── maps/                     # 地图文件
-│   ├── scripts/                  # 校准脚本
-│   └── tests/                    # 单元测试
+│   │   ├── map/                         # Grid map loader (.map format)
+│   │   ├── comm/                        # SNR-based communication model
+│   │   ├── tasks/                       # Task stream & manager
+│   │   └── env/                         # Gymnasium RL environment
+│   ├── configs/default.yaml             # Calibrated parameters
+│   ├── maps/                            # Test maps (32×32 grid)
+│   ├── scripts/                         # Calibration scripts
+│   └── tests/                           # Unit tests (pytest)
 │
-├── uav_ugv_ws/                   # ROS 2 工作空间
+├── 🤖 uav_ugv_ws/                       # ROS 2 workspace
 │   └── src/
-│       ├── uav_ugv_bringup/      # 仿真启动包
-│       │   ├── launch/           # Launch 文件
-│       │   │   ├── bringup_all.launch.py       # 主启动文件
-│       │   │   ├── spawn_turtlebot.launch.py   # TurtleBot3 生成（支持多机）
-│       │   │   ├── nav2_simple_launch.py       # Nav2 导航
-│       │   │   └── nav2_launch.py              # Nav2 完整版
-│       │   ├── config/           # 配置文件
-│       │   │   └── nav2_params.yaml            # Nav2 参数
-│       │   └── uav_ugv_bringup/  # Python 节点
-│       │       └── circle_demo.py              # UAV+UGV 圆周演示
-│       ├── px4_msgs/             # PX4 消息定义
-│       └── px4_ros_com/          # PX4-ROS 2 通信
+│       ├── uav_ugv_bringup/             # Simulation launch package
+│       │   ├── launch/
+│       │   │   ├── bringup_all.launch.py         # Main launcher
+│       │   │   ├── spawn_turtlebot.launch.py     # Multi-UGV spawner
+│       │   │   ├── nav2_simple_launch.py         # Nav2 navigation
+│       │   │   └── nav2_launch.py                # Nav2 (full stack)
+│       │   ├── config/nav2_params.yaml           # Tuned Nav2 parameters
+│       │   └── uav_ugv_bringup/
+│       │       └── circle_demo.py                # UAV+UGV circle demo
+│       ├── px4_msgs/                    # PX4 message definitions
+│       └── px4_ros_com/                 # PX4-ROS 2 bridge
 │
-├── PX4-Autopilot/                # PX4 固件（v1.17）
-├── Micro-XRCE-DDS-Agent/         # DDS Agent
-├── DEVLOG.md                     # 详细开发日志
-└── README.md                     # 本文件
+├── 🛩️ PX4-Autopilot/                    # PX4 firmware (v1.17)
+├── 🔌 Micro-XRCE-DDS-Agent/             # DDS agent for PX4
+├── 📝 DEVLOG.md                         # Detailed development log
+└── 📖 README.md                         # This file
 ```
 
-## 开发进度
+---
 
-### 阶段一：任务规划核心（ag_coop）
+## ✨ Features
 
-#### ✅ Day1-4：基础系统
-- **Day1**：地图加载（GridMap）+ 坐标系统
-- **Day2**：通信模型（SNR 计算，距离衰减 + 障碍物惩罚）
-- **Day3**：通信阈值校准（推荐 `snr_threshold_db = -9.0`）
-- **Day4**：任务系统（Task/TaskStream/TaskManager/VirtualUAVExecutor）
+### 🎓 Research Contributions
 
-#### ✅ Day8-9：强化学习环境
-- **Day8**：通信感知启发式基线（Communication-Aware Heuristic）
-- **Day9**：Gymnasium 环境设计（`UAVUGVEnv`）
-- **Day10**：PPO 训练集成（Stable-Baselines3）
+- **Communication-Aware Planning**: Joint optimization of task assignment and UGV relay positioning
+- **Deadline-Constrained Scheduling**: EDF-based task selection with slack analysis
+- **Hybrid Simulation**: Combines high-level task planning (Python) with low-level control (ROS 2/PX4)
+- **Calibrated Workloads**: Systematic parameter sweeps for task arrival rate and communication thresholds
 
-### 阶段二：ROS 2 仿真集成
+### 🛠️ Engineering Highlights
 
-#### ✅ Day11：PX4 + TurtleBot3 联合仿真
-- 搭建 ROS 2 Jazzy + Gazebo Harmonic + PX4 v1.17 环境
-- 解决 ROS 2 Jazzy + XRCE-DDS 兼容性（切换到 CycloneDDS）
-- 实现 UAV offboard 圆周飞行 + UGV 地面环绕演示
-- 修复 Gazebo Harmonic DiffDrive 插件话题命名问题
+- **Multi-Robot Scalability**: Dynamic SDF generation for independent UGV control (tested with 3 robots)
+- **QoS-Aware Communication**: Proper QoS profiles for PX4 XRCE-DDS compatibility
+- **Robust Navigation**: Tuned Nav2 parameters with recovery behaviors for cluttered environments
+- **WSL2 Optimization**: GPU acceleration fixes and GUI recovery scripts
 
-#### ✅ Day12：Nav2 导航系统
-- 配置 Nav2 自主导航（NavfnPlanner + DWB 局部规划器）
-- 修复 TF 树（添加 robot_state_publisher + TF 桥接）
-- 解决 velocity_smoother 激活问题（改为直接发布 cmd_vel）
-- 调参优化（允许后退、增强障碍物回避、调整膨胀半径）
-- 验证仿真时间同步（/clock 桥接）
+---
 
-#### ✅ Day13：多机 UGV 独立控制
-- 实现 3 台 TurtleBot3 独立控制（动态 SDF 话题替换）
-- 修复 Gazebo Harmonic 话题命名问题（SDF 相对路径不加模型前缀）
-- 使用 `-string` 参数动态生成 SDF（替换 cmd_vel/odom/scan 等话题）
+## 🚀 Installation
 
-#### ✅ Day14：PX4 ROS 2 通信要点
-- 发现 `ros2 topic pub` 无法控制 PX4（QoS 不匹配）
-- 必须用 Python 节点 + 手动设置 QoS（BEST_EFFORT + TRANSIENT_LOCAL）
-- 新版 PX4 话题带 `_v1` 后缀（如 `vehicle_status_v1`）
-- Offboard 起飞流程：持续发 setpoint → 切 offboard + ARM → 发目标位置
+### Prerequisites
 
-## 快速开始
+- **OS**: Ubuntu 24.04 LTS (native or WSL2)
+- **ROS 2**: Jazzy Jalisco
+- **Gazebo**: Harmonic
+- **Python**: 3.12+
 
-### 环境要求
-
-- Ubuntu 24.04 LTS（推荐 WSL2）
-- ROS 2 Jazzy
-- Gazebo Harmonic
-- Python 3.12+
-- PX4 Autopilot v1.17
-
-### 系统依赖安装
+### System Dependencies
 
 ```bash
-# ROS 2 Jazzy（参考官方文档）
-# Gazebo Harmonic
+# Install ROS 2 Jazzy (follow official guide)
+# https://docs.ros.org/en/jazzy/Installation.html
+
+# Install Gazebo Harmonic
 sudo apt install gz-harmonic
 
-# ROS 2 - Gazebo 桥接
+# Install ROS 2 - Gazebo bridge
 sudo apt install ros-jazzy-ros-gz
 
-# Nav2 导航
+# Install Nav2 navigation stack
 sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup
 
-# CycloneDDS（必需，用于 PX4 通信）
+# Install CycloneDDS (required for PX4 communication)
 sudo apt install ros-jazzy-rmw-cyclonedds-cpp
 
-# Python 依赖（ag_coop）
-pip install numpy pyyaml gymnasium stable-baselines3
+# Install TurtleBot3 packages
+sudo apt install ros-jazzy-turtlebot3*
 ```
 
-### 环境配置
-
-在 `~/.bashrc` 中添加：
+### Python Dependencies
 
 ```bash
-# ROS 2 Jazzy
-source /opt/ros/jazzy/setup.bash
-
-# 使用 CycloneDDS（必需，FastRTPS 无法与 PX4 XRCE-DDS 通信）
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-
-# 工作空间
-source ~/anders/ART_MAPF/uav-ugv-ws/uav_ugv_ws/install/setup.bash
-
-# 过滤 CycloneDDS 警告（可选）
-export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] [{name}]: {message}"
+# For ag_coop task planning
+pip install numpy pyyaml gymnasium stable-baselines3 torch
 ```
 
-### 编译 ROS 2 工作空间
+### Build ROS 2 Workspace
 
 ```bash
 cd uav_ugv_ws
@@ -145,134 +174,163 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 运行仿真
+### Environment Configuration
 
-#### 方式一：使用启动脚本（推荐）
+Add to `~/.bashrc`:
 
 ```bash
-# 在项目根目录
+# ROS 2 setup
+source /opt/ros/jazzy/setup.bash
+
+# Use CycloneDDS (required for PX4 XRCE-DDS compatibility)
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# Workspace setup
+source ~/anders/ART_MAPF/uav-ugv-ws/uav_ugv_ws/install/setup.bash
+
+# Optional: Filter CycloneDDS warnings
+export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] [{name}]: {message}"
+```
+
+---
+
+## 🎮 Quick Start
+
+### Option 1: Automated Launch (Recommended)
+
+```bash
+# Launch full system (PX4 SITL + DDS Agent + TurtleBot3)
 ./start.sh
 ```
 
-该脚本会自动启动：
-1. PX4 SITL（Gazebo 中的 x500 四旋翼）
-2. Micro-XRCE-DDS Agent（PX4-ROS 2 桥接）
-3. TurtleBot3 生成（可配置数量）
-4. ROS 2 - Gazebo 桥接
+### Option 2: Manual Launch
 
-#### 方式二：手动启动
+#### Terminal 1: PX4 SITL
 
 ```bash
-# Terminal 1 - PX4 SITL
 cd PX4-Autopilot
 make px4_sitl gz_x500
 
-# 在 PX4 shell 中配置参数（禁用 RC 和数据链路丢失保护）
+# In PX4 shell, disable RC/datalink failsafes
 param set COM_RCL_EXCEPT 4
 param set NAV_RCL_ACT 0
 param set NAV_DLL_ACT 0
+```
 
-# Terminal 2 - DDS Agent
+#### Terminal 2: DDS Agent
+
+```bash
 cd Micro-XRCE-DDS-Agent
 MicroXRCEAgent udp4 -p 8888
+```
 
-# Terminal 3 - 生成 TurtleBot3（3 台）
+#### Terminal 3: Spawn Robots
+
+```bash
 source uav_ugv_ws/install/setup.bash
-ros2 launch uav_ugv_bringup spawn_turtlebot.launch.py num_robots:=3
 
-# Terminal 4 - 运行演示（UAV + UGV 圆周运动）
+# Spawn 3 TurtleBot3 robots
+ros2 launch uav_ugv_bringup spawn_turtlebot.launch.py num_robots:=3
+```
+
+#### Terminal 4: Run Demo
+
+```bash
+# UAV offboard circle + UGV ground circle
 ros2 run uav_ugv_bringup circle_demo
 ```
 
-### 运行 Nav2 导航
+### Run Nav2 Navigation
 
 ```bash
-# 启动 Nav2（在 TurtleBot3 已生成的情况下）
+# Launch Nav2 for autonomous navigation
 ros2 launch uav_ugv_bringup nav2_simple_launch.py
 
-# 在 RViz 中设置目标点
-# 使用 "2D Goal Pose" 工具点击地图设置导航目标
+# Set goal in RViz using "2D Goal Pose" tool
 ```
 
-### 测试多机 UGV 独立控制
+### Test Multi-Robot Control
 
 ```bash
-# 生成 3 台 TurtleBot3
-ros2 launch uav_ugv_bringup spawn_turtlebot.launch.py num_robots:=3
-
-# 分别控制每台车
+# Control individual UGVs
 ros2 topic pub --once /tb3_0/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}}"
 ros2 topic pub --once /tb3_1/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}}"
 ros2 topic pub --once /tb3_2/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}}"
 ```
 
-## 任务规划系统（ag_coop）
+---
 
-### 运行测试
+## 📊 Task Planning System (ag_coop)
+
+### Run Tests
 
 ```bash
 cd ag_coop
 
-# 运行所有测试
-python -m pytest tests/
+# Run all unit tests
+python -m pytest tests/ -v
 
-# 运行任务系统验收测试
+# Run task system validation
 python tests/test_day4_validation.py
 ```
 
-### 校准脚本
+### Calibration Scripts
 
 ```bash
-# 任务负载校准
+# Sweep task arrival rate and deadline range
 python scripts/sweep_task_load.py
 
-# 通信阈值校准
+# Sweep communication SNR threshold
 python scripts/sweep_comm_threshold.py
 ```
 
-### 配置参数（ag_coop/configs/default.yaml）
+### Configuration Parameters
 
-#### 任务参数（已校准）
+#### Task Parameters (Calibrated)
 
 ```yaml
 tasks:
-  enabled: true
-  arrival_process: "bernoulli"
-  arrival_rate: 0.1             # 每步生成任务概率
-  deadline_min: 25              # 最小 deadline（步数）
-  deadline_max: 60              # 最大 deadline（步数）
-  max_active: 20                # 任务池最大容量
-  top_m: 5                      # Top-M 任务数量
-  service_time: 2               # 到点服务时间（步数）
+  arrival_rate: 0.1          # Task generation probability per step
+  deadline_min: 25           # Minimum deadline (steps)
+  deadline_max: 60           # Maximum deadline (steps)
+  max_active: 20             # Task pool capacity
+  top_m: 5                   # Number of tasks to select (EDF)
+  service_time: 2            # Service time at task location (steps)
 ```
 
-**任务负载 Profile：**
-- **Light**：`arrival_rate=0.05, deadline=[25,60]` → miss_rate=1.2%
-- **Default**：`arrival_rate=0.10, deadline=[25,60]` → miss_rate=23.4% ✅
-- **Heavy**：`arrival_rate=0.20, deadline=[25,60]` → miss_rate=69.5%
+**Workload Profiles:**
 
-#### 通信参数（已校准）
+| Profile | `arrival_rate` | `deadline` | `miss_rate` | Description |
+|---------|----------------|------------|-------------|-------------|
+| Light   | 0.05           | [25, 60]   | 1.2%        | Low pressure |
+| Default | 0.10           | [25, 60]   | 23.4% ✅    | Balanced |
+| Heavy   | 0.20           | [25, 60]   | 69.5%       | High pressure |
+
+#### Communication Parameters (Calibrated)
 
 ```yaml
 comm:
-  enabled: true
-  tx_power_db: 0.0              # 基准 SNR
-  pathloss_n: 2.0               # 距离衰减指数
-  obstacle_penalty_db: 6.0      # 每穿过一个障碍格扣多少 dB
-  snr_threshold_db: -9.0        # outage 阈值
-  eps_m: 0.05                   # 避免 log(0) 的小量
+  tx_power_db: 0.0           # Baseline SNR (dB)
+  pathloss_n: 2.0            # Path loss exponent
+  obstacle_penalty_db: 6.0   # Penalty per obstacle cell (dB)
+  snr_threshold_db: -9.0     # Outage threshold (dB)
 ```
 
-**通信 Profile：**
-- **Relaxed**：`snr_threshold_db=-12.0` → outage=6%
-- **Default**：`snr_threshold_db=-9.0` → outage=14% ✅
-- **Strict**：`snr_threshold_db=-7.0` → outage=26%
+**Communication Profiles:**
 
-## 关键技术要点
+| Profile | `snr_threshold_db` | Outage Rate | Description |
+|---------|--------------------|-------------|-------------|
+| Relaxed | -12.0              | 6%          | Lenient connectivity |
+| Default | -9.0               | 14% ✅      | Balanced |
+| Strict  | -7.0               | 26%         | Strict connectivity |
 
-### PX4 ROS 2 通信
+---
 
-**QoS 配置（必需）**：PX4 XRCE-DDS 使用 `BEST_EFFORT` + `TRANSIENT_LOCAL`，必须手动设置 QoS：
+## 🔧 Technical Details
+
+### PX4 ROS 2 Communication
+
+**Critical**: PX4 XRCE-DDS uses `BEST_EFFORT` + `TRANSIENT_LOCAL` QoS. You **must** configure QoS manually:
 
 ```python
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
@@ -284,65 +342,146 @@ px4_qos = QoSProfile(
     depth=1,
 )
 
-# 订阅 PX4 话题
+# Subscribe to PX4 topics
 self.create_subscription(VehicleStatus, '/fmu/out/vehicle_status_v1', callback, px4_qos)
 
-# 发布到 PX4
+# Publish to PX4
 self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', px4_qos)
 ```
 
-**注意**：
-- `ros2 topic pub` 无法控制 PX4（QoS 不匹配）
-- 新版 PX4 话题带 `_v1` 后缀（如 `vehicle_status_v1`）
-- `timestamp` 字段必须填写（微秒），不能为 0
+**Important Notes:**
+- `ros2 topic pub` **will not work** with PX4 (QoS mismatch)
+- PX4 v1.17 topics have `_v1` suffix (e.g., `vehicle_status_v1`)
+- `timestamp` field must be filled (microseconds), cannot be 0
 
-### Gazebo Harmonic 多机器人
+### Gazebo Harmonic Multi-Robot
 
-**话题命名问题**：SDF 插件中的相对话题名不会自动加模型前缀，多机场景必须手动替换为绝对路径：
+**Topic Naming Issue**: SDF plugin relative topics do **not** auto-prefix with model name. For multi-robot scenarios, manually replace with absolute paths:
 
 ```python
 def make_robot_sdf(sdf_template: str, name: str) -> str:
     sdf = sdf_template
     sdf = sdf.replace('<topic>cmd_vel</topic>', f'<topic>/{name}/cmd_vel</topic>')
     sdf = sdf.replace('<odom_topic>odom</odom_topic>', f'<odom_topic>/{name}/odom</odom_topic>')
-    # ... 其他话题替换
+    # ... other topic replacements
     return sdf
 ```
 
-**ros_gz_bridge 方向**：
-- `]` = ROS2→Gazebo（用于 cmd_vel）
-- `[` = Gazebo→ROS2（用于 scan/odom/tf）
+**ros_gz_bridge Direction:**
+- `]` = ROS2→Gazebo (for `cmd_vel`)
+- `[` = Gazebo→ROS2 (for `scan`, `odom`, `tf`)
 
-### Nav2 导航调参经验
+### Nav2 Tuning Tips
 
-**关键参数**：
-- `min_vel_x: -0.1`（允许后退，使 backup recovery 生效）
-- `inflation_radius: 0.75`（增大膨胀半径，远离墙壁）
-- `BaseObstacle.scale: 0.08`（增强障碍物回避权重）
-- `required_movement_radius: 0.3`（更快检测卡住）
-- `movement_time_allowance: 5s`（更快触发 recovery）
+**Key Parameters:**
 
-### WSL2 优化
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `min_vel_x` | -0.1 | Enable backward motion for recovery |
+| `inflation_radius` | 0.75 | Keep distance from walls |
+| `BaseObstacle.scale` | 0.08 | Increase obstacle avoidance weight |
+| `required_movement_radius` | 0.3 | Faster stuck detection |
+| `movement_time_allowance` | 5s | Faster recovery trigger |
 
-**GUI 修复**（添加到 `~/.bashrc`）：
+### WSL2 Optimization
+
+**GUI Recovery** (add to `~/.bashrc`):
 ```bash
 alias fix-gui='sudo killall -9 Xwayland; sleep 1; xclock &'
 ```
 
-**日志过滤**：
+**Log Filtering**:
 ```bash
-# 过滤 CycloneDDS 警告
 alias ros2-clean='ros2 2>&1 | grep -v "Failed to parse type hash"'
 ```
 
-## 开发日志
+---
 
-详细的开发日志请参考 [DEVLOG.md](DEVLOG.md)。
+## 📈 Development Timeline
 
-## 许可证
+### Phase 1: Task Planning Core (ag_coop)
 
-MIT License
+| Day | Milestone | Status |
+|-----|-----------|--------|
+| Day 1-4 | Grid map, communication model, task system | ✅ |
+| Day 8 | Communication-aware heuristic baseline | ✅ |
+| Day 9 | Gymnasium environment design | ✅ |
+| Day 10 | PPO training integration | ✅ |
 
-## 联系方式
+### Phase 2: ROS 2 Simulation Integration
 
-如有问题，请联系项目维护者。
+| Day | Milestone | Status |
+|-----|-----------|--------|
+| Day 11 | PX4 + TurtleBot3 joint simulation | ✅ |
+| Day 12 | Nav2 navigation system | ✅ |
+| Day 13 | Multi-UGV independent control | ✅ |
+| Day 14 | PX4 ROS 2 communication refinement | ✅ |
+
+---
+
+## 📚 Documentation
+
+- **[DEVLOG.md](DEVLOG.md)**: Detailed development log with troubleshooting notes
+- **[ag_coop/README.md](ag_coop/README.md)**: Task planning system documentation
+- **ROS 2 API**: Auto-generated from docstrings (coming soon)
+
+---
+
+## 🐛 Troubleshooting
+
+### Issue: PX4 not receiving commands
+
+**Solution**: Check QoS profile. Use `BEST_EFFORT` + `TRANSIENT_LOCAL` (see [PX4 ROS 2 Communication](#px4-ros-2-communication))
+
+### Issue: TurtleBot3 not moving in Gazebo
+
+**Solution**: Verify topic names with `gz topic -i -t /tb3_0/cmd_vel`. Ensure SDF uses absolute paths (see [Gazebo Harmonic Multi-Robot](#gazebo-harmonic-multi-robot))
+
+### Issue: Nav2 robot stuck at corners
+
+**Solution**: Tune `inflation_radius`, `BaseObstacle.scale`, and enable backward motion (see [Nav2 Tuning Tips](#nav2-tuning-tips))
+
+### Issue: WSL2 Gazebo GUI not showing
+
+**Solution**: Run `fix-gui` alias or manually restart Xwayland (see [WSL2 Optimization](#wsl2-optimization))
+
+---
+
+## 📄 Citation
+
+If you use this work in your research, please cite:
+
+```bibtex
+@misc{uav-ugv-coop-2026,
+  title={Communication-Constrained UAV-UGV Cooperative Task Planning},
+  author={Your Name},
+  year={2026},
+  howpublished={\url{https://github.com/yourusername/uav-ugv-ws}}
+}
+```
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- **PX4 Autopilot**: Open-source flight control software
+- **ROS 2**: Robot Operating System 2
+- **Gazebo**: High-fidelity robot simulator
+- **Nav2**: Navigation framework for mobile robots
+- **Stable-Baselines3**: Reliable RL implementations
+
+---
+
+<div align="center">
+
+**[⬆ Back to Top](#-uav-ugv-cooperative-system)**
+
+Made with ❤️ for robotics research
+
+</div>
