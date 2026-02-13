@@ -4,11 +4,12 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
-# 3 台 UGV 的配置：名称 + 出生位置（在 20x20m 地图的 free cell 内）
+# 3 台 UGV 的配置：名称 + 出生位置（在 20x20m 地图的 free cell 内，避开墙壁）
+# 墙壁布局：wall_0(南), wall_1(西), wall_2(东), wall_3(6,4), wall_4(12.5,8), wall_5(7,12), wall_6(14,16), wall_7(北)
 ROBOTS = [
-    {'name': 'tb3_0', 'x': '3.0',  'y': '2.0',  'z': '0.1'},
-    {'name': 'tb3_1', 'x': '10.0', 'y': '10.0', 'z': '0.1'},
-    {'name': 'tb3_2', 'x': '16.0', 'y': '18.0', 'z': '0.1'},
+    {'name': 'tb3_0', 'x': '3.0',  'y': '2.0',  'z': '0.1'},  # 西南角，wall_3 南侧
+    {'name': 'tb3_1', 'x': '10.0', 'y': '5.0',  'z': '0.1'},  # 中部偏南，wall_3 和 wall_4 之间
+    {'name': 'tb3_2', 'x': '17.0', 'y': '18.0', 'z': '0.1'},  # 东北角，wall_6 东侧
 ]
 
 
