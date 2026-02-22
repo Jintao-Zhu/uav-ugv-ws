@@ -1,0 +1,99 @@
+{
+  "config": "configs/day7_baseline.yaml",
+  "snr_threshold_db": -12.0,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "n_seeds": 10,
+  "stats": {
+    "tasks_completed": {
+      "greedy": {
+        "mean": 46.8,
+        "std": 2.485513584307633,
+        "min": 43.0,
+        "max": 52.0,
+        "median": 47.0
+      },
+      "coverage": {
+        "mean": 46.7,
+        "std": 2.7100635498903793,
+        "min": 43.0,
+        "max": 52.0,
+        "median": 46.0
+      }
+    },
+    "outage_percent_nc": {
+      "greedy": {
+        "mean": 43.67999999999999,
+        "std": 14.321762771701286,
+        "min": 17.4,
+        "max": 72.0,
+        "median": 42.1
+      },
+      "coverage": {
+        "mean": 40.0,
+        "std": 9.903983485895406,
+        "min": 25.4,
+        "max": 56.6,
+        "median": 39.1
+      }
+    },
+    "deadline_miss_rate": {
+      "greedy": {
+        "mean": 4.5089999999999995,
+        "std": 2.5319270219428605,
+        "min": 0.0,
+        "max": 8.16,
+        "median": 4.6
+      },
+      "coverage": {
+        "mean": 12.355,
+        "std": 5.120710128705023,
+        "min": 4.35,
+        "max": 21.74,
+        "median": 12.2
+      }
+    },
+    "mean_step_motion": {
+      "greedy": {
+        "mean": 1.1838000000000002,
+        "std": 0.20256675168666965,
+        "min": 0.96,
+        "max": 1.588,
+        "median": 1.096
+      },
+      "coverage": {
+        "mean": 1.4036000000000002,
+        "std": 0.13476498061440148,
+        "min": 1.182,
+        "max": 1.624,
+        "median": 1.419
+      }
+    }
+  },
+  "improvement": {
+    "outage_abs_reduction": 3.6799999999999926,
+    "outage_rel_reduction": 8.42490842490841,
+    "tasks_abs_change": -0.09999999999999432,
+    "tasks_rel_change": -0.21367521367520156
+  },
+  "per_seed_analysis": {
+    "positive_count": 7,
+    "positive_ratio": 0.7
+  },
+  "acceptance": {
+    "outage_pass": false,
+    "tasks_pass": true,
+    "majority_pass": true,
+    "overall_pass": false
+  }
+}

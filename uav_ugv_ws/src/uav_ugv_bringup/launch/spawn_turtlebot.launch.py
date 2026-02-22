@@ -68,6 +68,7 @@ def generate_launch_description():
 
     ld = LaunchDescription([clock_bridge])
 
+    # 为每个机器人创建 spawn、rsp 和特定话题的桥接
     for robot in ROBOTS:
         name = robot['name']
 
@@ -100,8 +101,8 @@ def generate_launch_description():
             output='screen'
         )
 
-        # 3. 话题桥接：Gazebo ↔ ROS 2
-        bridge = Node(
+        # 3. 机器人特定话题的桥接（不包括 /tf）
+        robot_bridge = Node(
             package='ros_gz_bridge',
             executable='parameter_bridge',
             name=f'bridge_{name}',
@@ -109,7 +110,6 @@ def generate_launch_description():
                 f'/{name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
                 f'/{name}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                 f'/{name}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
-                f'/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
                 f'/{name}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
             ],
             output='screen'
@@ -117,6 +117,18 @@ def generate_launch_description():
 
         ld.add_action(spawn)
         ld.add_action(rsp)
-        ld.add_action(bridge)
+        ld.add_action(robot_bridge)
+
+    # 4. 全局 TF 桥接（只创建一次，在循环外）
+    tf_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='tf_bridge',
+        arguments=[
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+        ],
+        output='screen'
+    )
+    ld.add_action(tf_bridge)
 
     return ld
