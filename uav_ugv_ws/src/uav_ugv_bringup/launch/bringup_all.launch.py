@@ -31,13 +31,15 @@ def generate_launch_description():
     # --- 环境变量 ---
     env_vars = [
         SetEnvironmentVariable('RMW_IMPLEMENTATION', 'rmw_cyclonedds_cpp'),
-        # PX4 Gazebo 资源路径
+        # PX4 Gazebo 资源路径 + ag_coop worlds
         SetEnvironmentVariable(
             name='GZ_SIM_RESOURCE_PATH',
             value=[
                 f'{px4_dir}/Tools/simulation/gz/models',
                 ':',
                 f'{px4_dir}/Tools/simulation/gz/worlds',
+                ':',
+                '/home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/worlds',  # 添加ag_coop worlds路径
                 ':',
                 EnvironmentVariable('GZ_SIM_RESOURCE_PATH', default_value=''),
             ]
@@ -59,7 +61,7 @@ def generate_launch_description():
             'bash', '-c',
             f'cd {px4_build_dir}/rootfs && '
             f'source ./gz_env.sh && '
-            f'export PX4_GZ_WORLD=default && '
+            f'export PX4_GZ_WORLD=default && '  # 先恢复使用default world
             f'export PX4_GZ_MODEL_POSE=10,14,0.5,0,0,0 && '
             f'export PX4_SIM_MODEL=gz_x500 && '
             f'export GZ_IP=127.0.0.1 && '
