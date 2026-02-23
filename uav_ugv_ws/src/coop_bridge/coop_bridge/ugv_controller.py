@@ -73,6 +73,10 @@ class UGVController:
         Args:
             msg: Odometry 消息
         """
+        # 首次接收odom数据时打印日志
+        if self.current_pose is None:
+            self.node.get_logger().info(f'{self.namespace}: First odom received')
+
         # 更新位置
         self.current_pose = msg.pose.pose.position
 
@@ -167,7 +171,7 @@ class UGVController:
                 cmd_vel.linear.x = 0.0
                 cmd_vel.angular.z = angular_output
             else:
-                # 阶段 2: 角度误差小 -> 前进
+                # 阶段 2: 角度误差小 -> 前进并微调方向
                 # PI 控制器 - 线速度
                 distance_error = math.sqrt(error_x**2 + error_y**2)
                 self.distance_integral += distance_error
@@ -175,7 +179,7 @@ class UGVController:
                                  self.KI_linear * self.distance_integral)
 
                 cmd_vel.linear.x = distance_output
-                cmd_vel.angular.z = 0.0
+                cmd_vel.angular.z = angular_output  # 保持角度微调，而不是设为0
 
             # 6. 速度限幅
             cmd_vel.linear.x = max(min(cmd_vel.linear.x,

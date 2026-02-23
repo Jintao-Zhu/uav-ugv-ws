@@ -123,7 +123,7 @@ class CoopBridgeNode(Node):
                 config=config,
                 output_dir=None,
                 enable_logging=False,
-                method='static'  # 使用 static 方法，让 MAPF 控制 UGV 移动
+                method='greedy'  # 使用 greedy 方法，让 UGV 真正移动和规划路径
             )
             self.grid_map = self.coop_env.grid_map
             self.get_logger().info('ag_coop environment initialized')
@@ -210,33 +210,6 @@ class CoopBridgeNode(Node):
         self.get_logger().info('=== Planning Phase ===')
 
         try:
-            # 等待所有 UGV 的 TF 可用
-            self.get_logger().info('Waiting for UGV transforms to be available...')
-            all_tf_ready = True
-
-            for ugv_id in range(self.num_ugvs):
-                frame_name = f'tb3_{ugv_id}/base_footprint'
-                timeout_sec = 5.0
-                start_time = self.get_clock().now()
-
-                while rclpy.ok():
-                    if self.tf_buffer.can_transform('map', frame_name, rclpy.time.Time()):
-                        self.get_logger().info(f'UGV {ugv_id} TF ready: map → {frame_name}')
-                        break
-
-                    elapsed = (self.get_clock().now() - start_time).nanoseconds / 1e9
-                    if elapsed > timeout_sec:
-                        self.get_logger().warning(
-                            f'Timeout waiting for TF: map → {frame_name} (waited {elapsed:.1f}s)'
-                        )
-                        all_tf_ready = False
-                        break
-
-                    time.sleep(0.1)
-
-            if not all_tf_ready:
-                self.get_logger().warning('Not all TF transforms are ready, proceeding anyway...')
-
             # 重置 ag_coop 环境
             obs = self.coop_env.reset()
             self.get_logger().info(f'ag_coop environment reset')
