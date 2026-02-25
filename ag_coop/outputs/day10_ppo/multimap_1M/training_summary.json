@@ -1,0 +1,11 @@
+{
+  "config": "configs/ppo_multimap_1M.yaml",
+  "total_timesteps": 1000000,
+  "n_envs": 8,
+  "train_seed": 42,
+  "eval_seed": 10000,
+  "output_dir": "outputs/day10_ppo/multimap_1M",
+  "final_model": "outputs/day10_ppo/multimap_1M/checkpoints/ppo_model_final.zip",
+  "best_model": "outputs/day10_ppo/multimap_1M/checkpoints/best_model.zip",
+  "tensorboard_log": "outputs/day10_ppo/multimap_1M/tb"
+}

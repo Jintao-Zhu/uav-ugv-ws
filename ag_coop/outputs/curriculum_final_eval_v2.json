@@ -1,0 +1,122 @@
+{
+  "model_path": "outputs/curriculum_ppo/run_20260225_102724/models/ppo_curriculum_final.zip",
+  "map_path": "maps/map_02.map",
+  "test_seeds": [
+    20000,
+    20001,
+    20002,
+    20003,
+    20004,
+    20005,
+    20006,
+    20007,
+    20008,
+    20009
+  ],
+  "n_episodes": 10,
+  "results": [
+    {
+      "seed": 20000,
+      "tasks_completed": 8,
+      "deadline_miss": 0,
+      "episode_reward": -12.520000000000056,
+      "outage_steps": 0,
+      "tardiness_sum": 0
+    },
+    {
+      "seed": 20001,
+      "tasks_completed": 32,
+      "deadline_miss": 11,
+      "episode_reward": 23.839999999999765,
+      "outage_steps": 0,
+      "tardiness_sum": 448
+    },
+    {
+      "seed": 20002,
+      "tasks_completed": 40,
+      "deadline_miss": 10,
+      "episode_reward": 35.36000000000006,
+      "outage_steps": 0,
+      "tardiness_sum": 322
+    },
+    {
+      "seed": 20003,
+      "tasks_completed": 39,
+      "deadline_miss": 6,
+      "episode_reward": 37.82000000000022,
+      "outage_steps": 0,
+      "tardiness_sum": 364
+    },
+    {
+      "seed": 20004,
+      "tasks_completed": 25,
+      "deadline_miss": 5,
+      "episode_reward": 16.93999999999982,
+      "outage_steps": 0,
+      "tardiness_sum": 137
+    },
+    {
+      "seed": 20005,
+      "tasks_completed": 15,
+      "deadline_miss": 1,
+      "episode_reward": -2.5400000000000933,
+      "outage_steps": 0,
+      "tardiness_sum": 68
+    },
+    {
+      "seed": 20006,
+      "tasks_completed": 5,
+      "deadline_miss": 0,
+      "episode_reward": -17.380000000000116,
+      "outage_steps": 0,
+      "tardiness_sum": 0
+    },
+    {
+      "seed": 20007,
+      "tasks_completed": 24,
+      "deadline_miss": 6,
+      "episode_reward": 11.67999999999974,
+      "outage_steps": 0,
+      "tardiness_sum": 286
+    },
+    {
+      "seed": 20008,
+      "tasks_completed": 45,
+      "deadline_miss": 11,
+      "episode_reward": 43.42000000000007,
+      "outage_steps": 0,
+      "tardiness_sum": 530
+    },
+    {
+      "seed": 20009,
+      "tasks_completed": 47,
+      "deadline_miss": 9,
+      "episode_reward": 49.820000000000455,
+      "outage_steps": 0,
+      "tardiness_sum": 474
+    }
+  ],
+  "statistics": {
+    "tasks_completed": {
+      "mean": 28.0,
+      "std": 14.331782861877304,
+      "min": 5,
+      "max": 47,
+      "median": 28.5
+    },
+    "episode_reward": {
+      "mean": 18.643999999999988,
+      "std": 22.42547979419852,
+      "min": -17.380000000000116,
+      "max": 49.820000000000455,
+      "median": 20.389999999999795
+    },
+    "deadline_miss": {
+      "mean": 5.9,
+      "std": 4.158124577258358,
+      "min": 0,
+      "max": 11,
+      "median": 6.0
+    }
+  }
+}

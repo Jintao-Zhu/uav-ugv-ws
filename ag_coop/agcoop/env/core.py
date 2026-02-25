@@ -1334,12 +1334,12 @@ class AGCoopEnv:
         delta_tasks = self.state.tasks_completed - prev_tasks_completed
         delta_miss = self.state.deadline_miss - prev_deadline_miss
 
-        # 各组成部分
-        r_task = 1.0 * delta_tasks
+        # 各组成部分（优化版本：增加任务奖励，减少惩罚）
+        r_task = 1.5 * delta_tasks          # 1.0 → 1.5
         r_time = -0.01
-        r_comm = -0.05 * current_outage_nc
-        r_deadline = -0.1 * delta_miss
-        r_mapf = -0.2 if mapf_timeout else 0.0
+        r_comm = -0.04 * current_outage_nc  # 0.05 → 0.04
+        r_deadline = -0.08 * delta_miss     # 0.1 → 0.08
+        r_mapf = -0.15 if mapf_timeout else 0.0  # 0.2 → 0.15
 
         # 总奖励
         total_reward = r_task + r_time + r_comm + r_deadline + r_mapf

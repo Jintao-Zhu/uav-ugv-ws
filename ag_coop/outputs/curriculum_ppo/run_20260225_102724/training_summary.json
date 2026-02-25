@@ -1,0 +1,38 @@
+{
+  "curriculum_stages": [
+    {
+      "stage": 1,
+      "name": "Stage 1: \u57fa\u7840\u534f\u540c\u4e0e\u8ba4\u77e5",
+      "map_path": "maps/map_03.map",
+      "timesteps": 300000,
+      "learning_rate": 0.0005,
+      "ent_coef": 0.02,
+      "description": "Map_03 \u5f00\u653e\u5730\u56fe - \u5b66\u4e60\u57fa\u7840\u534f\u540c"
+    },
+    {
+      "stage": 2,
+      "name": "Stage 2: \u969c\u788d\u7269\u9002\u5e94\u4e0e\u89c4\u907f",
+      "map_path": "maps/map_01.map",
+      "timesteps": 300000,
+      "learning_rate": 0.0003,
+      "ent_coef": 0.01,
+      "description": "Map_01 \u4e2d\u7b49\u906e\u6321 - \u5b66\u4e60\u8def\u5f84\u89c4\u5212"
+    },
+    {
+      "stage": 3,
+      "name": "Stage 3: \u6781\u7aef\u9ad8\u538b\u5fae\u8c03",
+      "map_path": "maps/map_02.map",
+      "timesteps": 600000,
+      "learning_rate": 0.0001,
+      "ent_coef": 0.005,
+      "description": "Map_02 \u9ad8\u906e\u6321 - \u6700\u7ec8\u7b56\u7565\u6253\u78e8"
+    }
+  ],
+  "total_timesteps": 1200000,
+  "n_envs": 8,
+  "train_seed": 42,
+  "eval_seed": 10000,
+  "output_dir": "outputs/curriculum_ppo/run_20260225_102724",
+  "final_model": "outputs/curriculum_ppo/run_20260225_102724/models/ppo_curriculum_final.zip",
+  "tensorboard_log": "outputs/curriculum_ppo/run_20260225_102724/tb"
+}

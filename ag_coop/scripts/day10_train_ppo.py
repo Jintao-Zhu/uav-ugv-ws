@@ -15,6 +15,7 @@ from typing import Dict, Any
 
 import numpy as np
 import yaml
+import torch  # 添加torch导入
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
     CheckpointCallback,
@@ -39,7 +40,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
     return config
 
 
-def make_env(config: Dict[str, Any], seed: int, rank: int = 0):
+def make_env(config: Dict[str, Any], seed: int, rank: int = 0, map_list: list = None):
     """
     创建环境的工厂函数（用于并行环境）
 
@@ -47,10 +48,37 @@ def make_env(config: Dict[str, Any], seed: int, rank: int = 0):
         config: 配置字典
         seed: 随机种子
         rank: 环境编号（用于并行环境）
+        map_list: 地图列表（用于多地图训练）
     """
     def _init():
+        # 复制配置
+        env_config = config.copy()
+
+        # 1. 多地图训练：确定性地选择地图
+        if map_list is not None and len(map_list) > 0:
+            # 使用 rank 和 seed 来确定性地选择地图（保证可复现）
+            map_idx = (seed + rank) % len(map_list)
+            env_config['episode']['map_path'] = map_list[map_idx]
+
+        # 2. 数据增强：随机化任务参数
+        import random
+        rng = random.Random(seed + rank)
+
+        # 随机arrival_rate：从[0.08, 0.10, 0.12]中选择
+        env_config['tasks']['arrival_rate'] = rng.choice([0.08, 0.10, 0.12])
+
+        # 随机deadline范围：从3种配置中选择
+        deadline_configs = [
+            (20, 50),  # 紧张
+            (25, 60),  # 标准
+            (30, 70),  # 宽松
+        ]
+        deadline_min, deadline_max = rng.choice(deadline_configs)
+        env_config['tasks']['deadline_min'] = deadline_min
+        env_config['tasks']['deadline_max'] = deadline_max
+
         # 创建基础环境
-        env = AGCoopGymEnv(config)
+        env = AGCoopGymEnv(env_config)
 
         # 应用 FlattenObservation wrapper
         env = FlattenObservation(env)
@@ -170,24 +198,42 @@ def main():
     # 保存配置
     save_config(config, output_dir)
 
+    # 获取地图列表（用于多地图训练）
+    map_list = training_config.get('maps', None)
+    if map_list is not None and len(map_list) > 1:
+        print(f"多地图训练模式: {len(map_list)} 张地图")
+        for i, map_path in enumerate(map_list):
+            print(f"  地图 {i+1}: {map_path}")
+        print()
+    elif map_list is not None and len(map_list) == 1:
+        print(f"单地图训练模式: {map_list[0]}")
+        print()
+    else:
+        print(f"单地图训练模式: {config['episode']['map_path']}")
+        print()
+
     # 创建训练环境（并行）
     print("创建训练环境...")
     if n_envs == 1:
         # 单环境
-        train_env = DummyVecEnv([make_env(config, args.seed, 0)])
+        train_env = DummyVecEnv([make_env(config, args.seed, 0, map_list)])
     else:
         # 多环境（使用 SubprocVecEnv 实现真正的并行）
         train_env = SubprocVecEnv([
-            make_env(config, args.seed, i) for i in range(n_envs)
+            make_env(config, args.seed, i, map_list) for i in range(n_envs)
         ])
 
     print(f"  训练环境: {n_envs} 个并行环境")
     print()
 
-    # 创建评估环境（单个）
+    # 创建评估环境（单个，使用第一张地图或配置中的地图）
     print("创建评估环境...")
-    eval_env = DummyVecEnv([make_env(config, args.eval_seed, 0)])
-    print(f"  评估环境: 1 个环境 (seed={args.eval_seed})")
+    eval_map_list = [map_list[0]] if map_list is not None and len(map_list) > 0 else None
+    eval_env = DummyVecEnv([make_env(config, args.eval_seed, 0, eval_map_list)])
+    if eval_map_list:
+        print(f"  评估环境: 1 个环境 (seed={args.eval_seed}, map={eval_map_list[0]})")
+    else:
+        print(f"  评估环境: 1 个环境 (seed={args.eval_seed})")
     print()
 
     # 创建或加载 PPO 模型
@@ -202,9 +248,17 @@ def main():
         print("  模型加载成功")
     else:
         print("创建 PPO 模型...")
+
+        # 定义更大的网络架构
+        policy_kwargs = dict(
+            net_arch=[128, 128, 64],  # 增加网络深度和宽度
+            activation_fn=torch.nn.ReLU,
+        )
+
         model = PPO(
             policy='MlpPolicy',
             env=train_env,
+            policy_kwargs=policy_kwargs,
             learning_rate=learning_rate,
             n_steps=n_steps,  # 使用计算好的 n_steps
             batch_size=batch_size,
