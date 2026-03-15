@@ -8,7 +8,33 @@ Day1 版本：UGV 原地不动，UAV 永远在 0 号车上，任务生成简单�
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
+from enum import IntEnum
 import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+
+
+class UAVMode(IntEnum):
+    """UAV工作模式"""
+    ONBOARD = 0   # 停靠/搭载在某台UGV上（充电中）
+    FLYING = 1    # 正在飞往目标点的途中
+    HOVERING = 2  # 在空中悬停（作为通信中继）
+
+
+@dataclass
+class UAVState:
+    """UAV独立状态"""
+    mode: UAVMode = UAVMode.ONBOARD
+    onboard_ugv_id: int = 0  # 如果停靠，记录停在几号车
+    position: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0], dtype=np.float32))
+    target_position: Optional[np.ndarray] = None
+    battery_level: float = 1.0  # 100% 电量
+
+    # 物理约束参数
+    speed: float = 1.0  # 每步飞行距离（米），比UGV的0.2快
+    battery_drain_fly: float = 0.005   # 飞行时每步耗电量
+    battery_drain_hover: float = 0.002 # 悬停时每步耗电量
+    battery_charge_rate: float = 0.01  # 停靠在UGV上时每步充电量
 
 
 @dataclass
@@ -34,10 +60,11 @@ class Task:
 
 @dataclass
 class SystemState:
-    """系统状态（Day1 最简版本）"""
+    """系统状态（升级版：支持UAV独立飞行）"""
     t: int = 0  # 当前时间步
     ugv_positions: List[Tuple[float, float]] = field(default_factory=list)  # [(x,y)] * n_ugv
-    uav_onboard_ugv_id: int = 0  # UAV 永远在 0 号车上（Day1）
+    uav_onboard_ugv_id: int = 0  # 兼容旧代码：记录UAV搭载的UGV ID（当mode=ONBOARD时有效）
+    uav_state: UAVState = field(default_factory=UAVState)  # UAV独立状态（新增）
     task_pool: List[Task] = field(default_factory=list)  # 任务池
 
     # 指标累计
@@ -99,7 +126,7 @@ class SystemState:
         }
 
 
-class AGCoopEnv:
+class AGCoopEnv(gym.Env):
     """
     AGCoop 环境主类（Day1 最简版本）
 
@@ -231,15 +258,19 @@ class AGCoopEnv:
     @property
     def action_space(self):
         """
-        Day9 Step 2: RL action space
+        升级版 RL action space：支持UAV独立飞行控制
 
-        返回 gym.spaces.MultiDiscrete([M+1, R+1])
+        返回 gym.spaces.MultiDiscrete([M+1, R+1, UAV_ACTIONS])
         - action[0]: task_choice ∈ {0..M}
           - 0 表示"不指定任务"（退化为 greedy/默认策略）
           - 1..M 表示从 Top-M 任务中选择第 i-1 个任务（索引从 0 开始）
         - action[1]: relay_target ∈ {0..R}
           - 0 表示"不指定 relay"（保持当前策略）
           - 1..R 表示从候选点集合中选择第 i-1 个候选点（索引从 0 开始）
+        - action[2]: uav_action ∈ {0..15} (NEW!)
+          - 0: 无动作（维持当前状态）
+          - 1-12: 飞往对应的第 i 个候选中继点
+          - 13-15: 飞向并降落到对应的 UGV 上（动作值 - 13 = UGV ID）
 
         注意：实际的 M 和 R 在 reset() 后才能确定（取决于任务数量和候选点数量）
         """
@@ -248,12 +279,17 @@ class AGCoopEnv:
             try:
                 from gymnasium import spaces
             except ImportError:
-                from gym import spaces
+             from gym import spaces
 
-            # MultiDiscrete: [task_choice, relay_target]
+            # MultiDiscrete: [task_choice, relay_target, uav_action]
             # task_choice: 0..M (M+1 个选项)
             # relay_target: 0..R (R+1 个选项)
-            self._action_space = spaces.MultiDiscrete([self.top_m + 1, self.candidate_count + 1])
+            # uav_action: 0..15 (16 个选项: 0=无动作, 1-12=飞往中继点, 13-15=降落到UGV)
+            self._action_space = spaces.MultiDiscrete([
+                self.top_m + 1,           # task_choice
+                self.candidate_count + 1, # relay_target
+                1 + 12 + 3                # uav_action (16 options)
+            ])
 
         return self._action_space
 
@@ -295,13 +331,14 @@ class AGCoopEnv:
                     dtype=np.float32
                 ),
 
-                # UAV 状态：(3,) - [onboard_ugv_id, mode, reserved]
-                # onboard_ugv_id: 0..N-1 归一化到 [0, 1]
-                # mode: 0=ONBOARD, 1=OUTBOUND, 2=SERVICING, 3=INBOUND (归一化到 [0, 1])
-                # reserved: 占位，暂时为 0
+                # UAV 状态：(5,) - [mode, pos_x, pos_y, battery, onboard_ugv_id]
+                # mode: 0=ONBOARD, 1=FLYING, 2=HOVERING (归一化到 [0, 1])
+                # pos_x, pos_y: UAV位置归一化到 [0, 1]
+                # battery: 电池电量 [0, 1]
+                # onboard_ugv_id: 0..N-1 归一化到 [0, 1]（仅当mode=ONBOARD时有意义）
                 'uav_state': spaces.Box(
                     low=0.0, high=1.0,
-                    shape=(3,),
+                    shape=(5,),
                     dtype=np.float32
                 ),
 
@@ -337,13 +374,21 @@ class AGCoopEnv:
 
         return self._observation_space
 
-    def reset(self) -> Dict[str, np.ndarray]:
+    def reset(self, seed=None, options=None):
         """
         重置环境到初始状态
 
+        Args:
+            seed: 随机种子（可选）
+            options: 额外选项（可选）
+
         Returns:
-            初始观测（Dict 格式）
+            (observation, info) 元组
         """
+        # 如果提供了新的 seed，更新环境的 seed
+        if seed is not None:
+            self.seed = seed
+
         # 重置随机数生成器（保证可复现）
         self.rng = np.random.RandomState(self.seed)
 
@@ -643,10 +688,12 @@ class AGCoopEnv:
 
             print(f"任务目录生成: {len(self.task_catalog)} 个任务, hash={self.task_catalog.compute_hash()}")
 
-        # Day9 Step 3: 返回初始观测
-        return self._get_observation()
+        # Day9 Step 3: 返回初始观测和信息字典
+        obs = self._get_observation()
+        info = {}
+        return obs, info
 
-    def step(self, action: Optional[Any] = None) -> Tuple[Dict[str, np.ndarray], float, bool, Dict[str, Any]]:
+    def step(self, action: Optional[Any] = None):
         """
         执行一步环境演化
 
@@ -656,10 +703,11 @@ class AGCoopEnv:
                 - 非决策步忽略 action，继续执行缓存的控制逻辑
 
         Returns:
-            (obs, reward, done, info) 元组
+            (obs, reward, terminated, truncated, info) 元组
             - obs: 新的观测（Dict 格式）
-            - reward: 奖励（Day9 预留，返回 0.0）
-            - done: 是否结束
+            - reward: 奖励
+            - terminated: 是否因任务完成而结束
+            - truncated: 是否因时间限制而结束
             - info: 额外信息字典
                 - action_applied: bool，是否应用了 action
                 - decision_step: bool，是否为决策步
@@ -748,8 +796,17 @@ class AGCoopEnv:
             # self.state.ugv_positions 保持不变
             pass
 
-        # Day1: UAV 原地不动（永远在 0 号车上）
-        # self.state.uav_onboard_ugv_id 保持为 0
+        # 🔥 新增：UAV 独立飞行物理更新（每步都执行）
+        if is_decision_step and action is not None:
+            # 解析 action 的第三个维度：uav_action
+            if len(action) >= 3:
+                uav_action = int(action[2])
+            else:
+                uav_action = 0  # 兼容旧版本action（只有2维）
+        else:
+            uav_action = 0  # 非决策步或无action，UAV保持当前状态
+
+        self._update_uav_physics(uav_action)
 
         # 任务生成（可选）
         if self.tasks_enabled:
@@ -824,7 +881,14 @@ class AGCoopEnv:
 
         # Day9 Step 3: 返回观测而不是状态
         obs = self._get_observation()
-        return obs, reward, done, info
+
+        # Gymnasium 要求返回 5 个值：(obs, reward, terminated, truncated, info)
+        # terminated: 任务完成（成功或失败）
+        # truncated: 时间限制到达
+        terminated = False  # 我们的环境没有"任务完成"的概念
+        truncated = done    # 时间限制到达
+
+        return obs, reward, terminated, truncated, info
 
     def _generate_tasks(self) -> None:
         """
@@ -869,6 +933,107 @@ class AGCoopEnv:
 
             # 添加任务
             self.state.add_task(position, self.state.t, deadline)
+
+    def _update_uav_physics(self, uav_action: int) -> None:
+        """
+        更新UAV物理状态：处理飞行、悬停、降落、电池管理
+
+        Args:
+            uav_action: RL智能体的UAV控制指令
+                0: 无动作（维持当前状态）
+                1-12: 飞往对应的候选中继点
+                13-15: 飞向并降落到对应的UGV
+        """
+        uav = self.state.uav_state
+
+        # 1. 解析RL指令并设置目标
+        if uav_action > 0:
+            if 1 <= uav_action <= 12:  # 命令飞往中继点
+                if hasattr(self, 'candidate_relays') and self.candidate_relays:
+                    target_idx = uav_action - 1
+                    if target_idx < len(self.candidate_relays):
+                        # 候选点是(i, j) cell坐标，需要转换为world坐标
+                        relay_cell = self.candidate_relays[target_idx]
+                        if self.grid_map is not None:
+                            target_world = self.grid_map.cell_to_world(relay_cell[0], relay_cell[1])
+                            uav.target_position = np.array(target_world, dtype=np.float32)
+                            if uav.mode == UAVMode.ONBOARD:
+                                uav.mode = UAVMode.FLYING
+
+            elif 13 <= uav_action <= 15:  # 命令飞回UGV降落
+                target_ugv_idx = uav_action - 13
+                if 0 <= target_ugv_idx < len(self.state.ugv_positions):
+                    uav.target_position = np.array(self.state.ugv_positions[target_ugv_idx], dtype=np.float32)
+                    uav.onboard_ugv_id = target_ugv_idx  # 记录降落意图
+                    if uav.mode != UAVMode.ONBOARD:
+                        uav.mode = UAVMode.FLYING
+
+        # 2. 底层硬约束：电池保护（紧急情况下接管RL的控制权）
+        if uav.battery_level < 0.15 and uav.mode != UAVMode.ONBOARD:
+            # 触发紧急返航，寻找最近的UGV
+            nearest_ugv_id = self._find_nearest_ugv(uav.position)
+            uav.target_position = np.array(self.state.ugv_positions[nearest_ugv_id], dtype=np.float32)
+            uav.onboard_ugv_id = nearest_ugv_id
+            uav.mode = UAVMode.FLYING
+
+        # 3. 执行物理移动与电量结算
+        if uav.mode == UAVMode.FLYING:
+            # 向目标移动
+            if uav.target_position is not None:
+                direction = uav.target_position - uav.position
+                distance = np.linalg.norm(direction)
+
+                if distance <= uav.speed:
+                    # 到达目标
+                    uav.position = uav.target_position.copy()
+                    # 根据目标类型切换模式
+                    ugv_pos = np.array(self.state.ugv_positions[uav.onboard_ugv_id], dtype=np.float32)
+                    if np.linalg.norm(uav.position - ugv_pos) < 0.1:
+                        uav.mode = UAVMode.ONBOARD  # 成功降落
+                    else:
+                        uav.mode = UAVMode.HOVERING  # 到达中继点悬停
+                else:
+                    # 继续飞行
+                    uav.position += (direction / distance) * uav.speed
+
+            # 扣除飞行电量
+            uav.battery_level = max(0.0, uav.battery_level - uav.battery_drain_fly)
+
+        elif uav.mode == UAVMode.HOVERING:
+            # 扣除悬停电量
+            uav.battery_level = max(0.0, uav.battery_level - uav.battery_drain_hover)
+
+        elif uav.mode == UAVMode.ONBOARD:
+            # 完美跟随搭载的UGV移动
+            uav.position = np.array(self.state.ugv_positions[uav.onboard_ugv_id], dtype=np.float32)
+            # 充电
+            uav.battery_level = min(1.0, uav.battery_level + uav.battery_charge_rate)
+
+        # 4. 同步旧的uav_onboard_ugv_id字段（向后兼容）
+        if uav.mode == UAVMode.ONBOARD:
+            self.state.uav_onboard_ugv_id = uav.onboard_ugv_id
+
+    def _find_nearest_ugv(self, position: np.ndarray) -> int:
+        """
+        找到距离给定位置最近的UGV
+
+        Args:
+            position: 位置坐标 (x, y)
+
+        Returns:
+            最近的UGV的ID
+        """
+        min_dist = float('inf')
+        nearest_id = 0
+
+        for i, ugv_pos in enumerate(self.state.ugv_positions):
+            ugv_pos_array = np.array(ugv_pos, dtype=np.float32)
+            dist = np.linalg.norm(position - ugv_pos_array)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_id = i
+
+        return nearest_id
 
     def _complete_tasks_simple(self) -> None:
         """
@@ -1212,18 +1377,27 @@ class AGCoopEnv:
                 ugv_pos[i, 0] = pos[0] / map_w
                 ugv_pos[i, 1] = pos[1] / map_h
 
-        # 2. UAV 状态：(3,) - [onboard_ugv_id, mode, reserved]
-        uav_state = np.zeros(3, dtype=np.float32)
-        uav_state[0] = self.state.uav_onboard_ugv_id / max(1.0, float(N - 1))  # 归一化到 [0, 1]
+        # 2. UAV 状态：(5,) - [mode, pos_x, pos_y, battery, onboard_ugv_id]
+        uav_state = np.zeros(5, dtype=np.float32)
+        uav = self.state.uav_state
 
-        # UAV mode（如果有的话）
-        if hasattr(self.state, 'uav_mode'):
-            # 假设 mode: 0=ONBOARD, 1=OUTBOUND, 2=SERVICING, 3=INBOUND
-            uav_state[1] = getattr(self.state, 'uav_mode', 0) / 3.0  # 归一化到 [0, 1]
+        # mode: 0=ONBOARD, 1=FLYING, 2=HOVERING (归一化到 [0, 1])
+        uav_state[0] = float(uav.mode) / 2.0
+
+        # UAV位置归一化
+        if self.grid_map is not None:
+            cell = self.grid_map.world_to_cell(uav.position[0], uav.position[1])
+            uav_state[1] = cell[1] / map_w  # x (列)
+            uav_state[2] = cell[0] / map_h  # y (行)
         else:
-            uav_state[1] = 0.0  # 默认 ONBOARD
+            uav_state[1] = uav.position[0] / map_w
+            uav_state[2] = uav.position[1] / map_h
 
-        uav_state[2] = 0.0  # reserved
+        # 电池电量（已经是 [0, 1]）
+        uav_state[3] = uav.battery_level
+
+        # onboard_ugv_id（归一化）
+        uav_state[4] = uav.onboard_ugv_id / max(1.0, float(N - 1))
 
         # 3. Top-M 任务：(M, 4) - [x, y, deadline_norm, available]
         tasks_topM = np.zeros((M, 4), dtype=np.float32)
@@ -1334,12 +1508,33 @@ class AGCoopEnv:
         delta_tasks = self.state.tasks_completed - prev_tasks_completed
         delta_miss = self.state.deadline_miss - prev_deadline_miss
 
-        # 各组成部分（优化版本：增加任务奖励，减少惩罚）
-        r_task = 1.5 * delta_tasks          # 1.0 → 1.5
+        # ==========================================
+        # 奖励函数 V4 (帕累托黄金比例)
+        # 比例：3.0 / 0.15 = 20倍（几何居中于V2的9倍和V3的50倍）
+        # ==========================================
+
+        # 1. 适度拔高的任务悬赏 (打破 V2 的保守)
+        r_task = 3.0 * delta_tasks
+
+        # 2. 时间惩罚（保持不变）
         r_time = -0.01
-        r_comm = -0.04 * current_outage_nc  # 0.05 → 0.04
-        r_deadline = -0.08 * delta_miss     # 0.1 → 0.08
-        r_mapf = -0.15 if mapf_timeout else 0.0  # 0.2 → 0.15
+
+        # 3. 具备威慑力的通信惩罚 (兜底 V3 的通信崩溃)
+        r_comm = -0.15 * current_outage_nc  # V2: -0.20, V3: -0.10, V4: -0.15 (黄金中点)
+
+        # 4. 截断/有界的超期惩罚 (防止形成无底洞)
+        # 数学防线：即使严重超期(-2.0) + 长时间断网(-2.0)，净收益仍为 3.0-2.0-2.0=-1.0
+        # 但正常情况下（轻微超期-0.5 + 适度断网-1.5），净收益为 3.0-0.5-1.5=+1.0 > 0
+        if delta_miss > 0:
+            import math
+            max_penalty = -2.0  # 惩罚上限
+            steepness = 0.05
+            # 使用 tanh 将无限的延迟时间映射到 [0, -2.0) 的区间
+            r_deadline = max_penalty * math.tanh(steepness * delta_miss)
+        else:
+            r_deadline = 0.0
+
+        r_mapf = -0.15 if mapf_timeout else 0.0
 
         # 总奖励
         total_reward = r_task + r_time + r_comm + r_deadline + r_mapf
@@ -1413,9 +1608,9 @@ class AGCoopEnv:
         # 使用真实通信模型
         from agcoop.comm import compute_best_snr
 
-        # 获取 UAV 位置（在 UGV 上）
-        uav_ugv_id = self.state.uav_onboard_ugv_id
-        uav_world_pos = self.state.ugv_positions[uav_ugv_id]
+        # 🔥 升级：获取 UAV 的真实独立位置（而非简单的carrier位置）
+        uav = self.state.uav_state
+        uav_world_pos = uav.position
 
         # 转换为 cell 坐标
         uav_cell = self.grid_map.world_to_cell(uav_world_pos[0], uav_world_pos[1])
@@ -1436,7 +1631,7 @@ class AGCoopEnv:
         ugv_cells_nc = []
         ugv_ids_nc = []
         for i, ugv_pos in enumerate(self.state.ugv_positions):
-            if i == uav_ugv_id:
+            if i == uav.onboard_ugv_id:
                 continue  # 跳过 carrier
             ugv_cell = self.grid_map.world_to_cell(ugv_pos[0], ugv_pos[1])
             ugv_cells_nc.append(ugv_cell)
@@ -1465,8 +1660,14 @@ class AGCoopEnv:
                 # 计算遮挡
                 blocked_count = raycast.count_blocked_cells(self.grid_map, uav_cell, ugv_cell)
 
-                # 计算 SNR
-                snr = compute_snr(distance_m, blocked_count, self.comm_config)
+                # 🔥 升级：使用 A2G 通信模型
+                snr = compute_snr(
+                    distance_m,
+                    blocked_count,
+                    self.comm_config,
+                    is_a2g=True,  # 这是空对地链路
+                    uav_mode=int(uav.mode)  # 传入UAV当前模式
+                )
                 snr_list_nc.append(snr)
 
             # 最差链路 SNR

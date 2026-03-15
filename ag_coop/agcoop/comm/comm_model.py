@@ -3,6 +3,8 @@
 
 基于距离衰减和障碍物遮挡的通信质量模型。
 
+升级版：支持 A2G (Air-to-Ground) 和 G2G (Ground-to-Ground) 差异化
+
 SNR 公式：
     snr_db = tx_power_db - 10 * pathloss_n * log10(d + eps) - obstacle_penalty_db * blocked
 
@@ -13,6 +15,8 @@ SNR 公式：
 - eps: 避免 log(0) 的小量
 - blocked: 遮挡的障碍格子数
 - obstacle_penalty_db: 每个障碍的衰减（dB）
+  - A2G (空对地): 1.5 dB/障碍物（仰角优势，穿透力强）
+  - G2G (地对地): 6.0 dB/障碍物（平行传输，穿透力弱）
 
 Outage 判断：
     outage = 1 if snr_best < snr_threshold_db else 0
@@ -29,7 +33,8 @@ class CommConfig:
     enabled: bool = True
     tx_power_db: float = 0.0
     pathloss_n: float = 2.0
-    obstacle_penalty_db: float = 6.0
+    obstacle_penalty_db: float = 6.0  # G2G 默认值
+    obstacle_penalty_a2g_db: float = 1.5  # A2G 优化值（新增）
     snr_threshold_db: float = -20.0
     eps_m: float = 0.05
 
@@ -41,6 +46,7 @@ class CommConfig:
             tx_power_db=config_dict.get('tx_power_db', 0.0),
             pathloss_n=config_dict.get('pathloss_n', 2.0),
             obstacle_penalty_db=config_dict.get('obstacle_penalty_db', 6.0),
+            obstacle_penalty_a2g_db=config_dict.get('obstacle_penalty_a2g_db', 1.5),
             snr_threshold_db=config_dict.get('snr_threshold_db', -20.0),
             eps_m=config_dict.get('eps_m', 0.05),
         )
@@ -49,15 +55,19 @@ class CommConfig:
 def compute_snr(
     distance_m: float,
     blocked_count: int,
-    config: CommConfig
+    config: CommConfig,
+    is_a2g: bool = False,
+    uav_mode: int = 0
 ) -> float:
     """
-    计算 SNR（信噪比）。
+    计算 SNR（信噪比）- 升级版：支持 A2G 和 G2G 差异化
 
     Args:
         distance_m: 距离（米）
         blocked_count: 遮挡的障碍格子数
         config: 通信配置
+        is_a2g: 是否为空对地链路（True=A2G, False=G2G）
+        uav_mode: UAV模式（0=ONBOARD, 1=FLYING, 2=HOVERING）
 
     Returns:
         SNR（dB）
@@ -67,17 +77,28 @@ def compute_snr(
         >>> compute_snr(1.0, 0, config)
         0.0  # 1 米无障碍，SNR = 0 - 10*2*log10(1.05) ≈ -0.21
 
-        >>> compute_snr(10.0, 2, config)
-        -32.0  # 10 米 + 2 个障碍，SNR = 0 - 10*2*log10(10.05) - 6*2 ≈ -32.0
+        >>> compute_snr(10.0, 2, config, is_a2g=True, uav_mode=2)
+        -23.0  # A2G: 10 米 + 2 个障碍，SNR = 0 - 10*2*log10(10.05) - 1.5*2 ≈ -23.0
     """
     # 距离衰减项
     distance_loss_db = 10.0 * config.pathloss_n * np.log10(distance_m + config.eps_m)
 
-    # 障碍衰减项
-    obstacle_loss_db = config.obstacle_penalty_db * blocked_count
+    # 🔥 核心创新：基于仰角的智能穿透惩罚
+    if is_a2g and uav_mode in [1, 2]:  # FLYING 或 HOVERING
+        # 无人机在空中：具有视距(LoS)优势
+        # 惩罚大幅降低：空中俯角穿透，每个障碍物仅衰减 1.5 dB
+        obstacle_penalty = config.obstacle_penalty_a2g_db * blocked_count
+
+        # 可选的高阶物理特性：极近距离内，仰角极大，几乎无视遮挡
+        if distance_m < 3.0:
+            obstacle_penalty = 0.0
+    else:
+        # 地面通信 (G2G) 或 无人机趴在车上 (ONBOARD)
+        # 信号平行贴地传输，穿墙极其困难，每个障碍物衰减 6.0 dB
+        obstacle_penalty = config.obstacle_penalty_db * blocked_count
 
     # 总 SNR
-    snr_db = config.tx_power_db - distance_loss_db - obstacle_loss_db
+    snr_db = config.tx_power_db - distance_loss_db - obstacle_penalty
 
     return snr_db
 

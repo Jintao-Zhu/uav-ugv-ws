@@ -1,0 +1,49 @@
+{
+  "test_seeds": [
+    20000,
+    20001,
+    20002,
+    20003,
+    20004,
+    20005,
+    20006,
+    20007,
+    20008,
+    20009
+  ],
+  "max_steps": 500,
+  "policies": {
+    "Tethered-Greedy": {
+      "mean_tasks_completed": 44.9,
+      "std_tasks_completed": 6.847627326307997,
+      "mean_total_reward": 61.3964313044723,
+      "std_total_reward": 23.502193338222423,
+      "mean_deadline_miss": 15.4,
+      "std_deadline_miss": 5.817215828899594
+    },
+    "Static-Center": {
+      "mean_tasks_completed": 44.9,
+      "std_tasks_completed": 6.847627326307997,
+      "mean_total_reward": 86.22143130447189,
+      "std_total_reward": 29.989390038300492,
+      "mean_deadline_miss": 15.4,
+      "std_deadline_miss": 5.817215828899594
+    },
+    "Dynamic-Heuristic": {
+      "mean_tasks_completed": 44.9,
+      "std_tasks_completed": 6.847627326307997,
+      "mean_total_reward": 73.59143130447195,
+      "std_total_reward": 31.788595203630642,
+      "mean_deadline_miss": 15.4,
+      "std_deadline_miss": 5.817215828899594
+    },
+    "Pure-Random": {
+      "mean_tasks_completed": 38.3,
+      "std_tasks_completed": 6.4039050586341455,
+      "mean_total_reward": 87.50246161559238,
+      "std_total_reward": 22.460994136121077,
+      "mean_deadline_miss": 21.8,
+      "std_deadline_miss": 3.7894590642992836
+    }
+  }
+}

@@ -1,0 +1,96 @@
+[2026-03-14 13:43:57] 
+======================================================================
+[2026-03-14 13:43:57] 🚀 开始完整训练与评估流程
+[2026-03-14 13:43:57] ======================================================================
+[2026-03-14 13:43:57] 
+【阶段 1/4】训练学习类 Baselines
+[2026-03-14 13:43:57] ✗ 模型不存在: vanilla_ppo
+[2026-03-14 13:43:57] 
+======================================================================
+[2026-03-14 13:43:57] 开始: 训练 Vanilla PPO Baseline
+[2026-03-14 13:43:57] 命令: python scripts/train_vanilla_ppo.py
+[2026-03-14 13:43:57] ======================================================================
+[2026-03-14 14:47:28] ✓ 完成: 训练 Vanilla PPO Baseline (耗时: 63.5 分钟)
+[2026-03-14 14:47:28] ✗ 模型不存在: dqn
+[2026-03-14 14:47:28] 
+======================================================================
+[2026-03-14 14:47:28] 开始: 训练 DQN Baseline
+[2026-03-14 14:47:28] 命令: python scripts/train_dqn_baseline.py
+[2026-03-14 14:47:28] ======================================================================
+[2026-03-14 14:47:41] ✗ 失败: 训练 DQN Baseline (耗时: 0.2 分钟)
+[2026-03-14 14:47:41] 错误信息:
+
+======================================================================
+🔬 DQN Baseline Training (值函数方法对照)
+======================================================================
+
+配置:
+  - 地图: maps/map_02.map
+  - 并行环境数: 8
+  - 总训练步数: 1,200,000
+
+DQN 特征:
+  - 算法: Deep Q-Network (值函数方法)
+  - 探索策略: Epsilon-greedy (1.0 → 0.05)
+  - 经验回放: 100k buffer
+  - 目标网络: 每10k步更新
+
+创建并行训练环境...
+创建评估环境...
+Traceback (most recent call last):
+  File "/home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/scripts/train_dqn_baseline.py", line 181, in <module>
+    main()
+  File "/home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/scripts/train_dqn_baseline.py", line 115, in main
+    model = DQN(
+  File "/home/anders/miniconda3/envs/RL/lib/python3.10/site-packages/stable_baselines3/dqn/dqn.py", line 106, in __init__
+    super().__init__(
+  File "/home/anders/miniconda3/envs/RL/lib/python3.10/site-packages/stable_baselines3/common/off_policy_algorithm.py", line 112, in __init__
+    super().__init__(
+  File "/home/anders/miniconda3/envs/RL/lib/python3.10/site-packages/stable_baselines3/common/base_class.py", line 181, in __init__
+    assert isinstance(self.action_space, supported_action_spaces), (
+AssertionError: The algorithm only supports (<class 'gymnasium.spaces.discrete.Discrete'>,) as action spaces but MultiDiscrete([ 6 13 16]) was provided
+
+模型保存目录: /home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/outputs/dqn_baseline_map02
+
+初始化 DQN...
+Using cuda device
+
+✗ 训练失败: The algorithm only supports (<class 'gymnasium.spaces.discrete.Discrete'>,) as action spaces but MultiDiscrete([ 6 13 16]) was provided
+
+[2026-03-14 14:47:41] 
+⚠️  部分训练失败，但继续执行评估...
+[2026-03-14 14:47:41] 
+【阶段 2/4】可扩展性评估
+[2026-03-14 14:47:41] ✓ 模型已存在: vanilla_ppo (/home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/outputs/vanilla_ppo_baseline_map02/best_model/best_model.zip)
+[2026-03-14 14:47:41] ✗ 模型不存在: dqn
+[2026-03-14 14:47:41] ✗ 模型不存在: ppo_v4
+[2026-03-14 14:47:41] ⚠️  可用模型不足 2 个，跳过评估
+[2026-03-14 14:47:41] 
+【阶段 3/4】生成论文图表
+[2026-03-14 14:47:41] 
+======================================================================
+[2026-03-14 14:47:41] 开始: 生成论文图表
+[2026-03-14 14:47:41] 命令: python scripts/plot_scalability_results.py
+[2026-03-14 14:47:41] ======================================================================
+[2026-03-14 14:47:43] ✓ 完成: 生成论文图表 (耗时: 0.0 分钟)
+[2026-03-14 14:47:43] 
+【阶段 4/4】生成总结报告
+[2026-03-14 14:47:43] 
+======================================================================
+[2026-03-14 14:47:43] 📊 流程执行总结
+[2026-03-14 14:47:43] ======================================================================
+[2026-03-14 14:47:43] 
+模型状态:
+[2026-03-14 14:47:43]   vanilla_ppo: ✓ 存在
+[2026-03-14 14:47:43]   dqn: ✗ 缺失
+[2026-03-14 14:47:43]   ppo_v4: ✗ 缺失
+[2026-03-14 14:47:43] 
+结果文件:
+[2026-03-14 14:47:43] 
+完整日志: /home/anders/anders/ART_MAPF/uav-ugv-ws/ag_coop/outputs/pipeline_log_20260314_134357.txt
+[2026-03-14 14:47:43] 
+总耗时: 1.06 小时
+[2026-03-14 14:47:43] 
+======================================================================
+[2026-03-14 14:47:43] ✅ 流程执行完成
+[2026-03-14 14:47:43] ======================================================================
